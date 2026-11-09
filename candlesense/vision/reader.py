@@ -39,6 +39,7 @@ class ReaderConfig:
     timer_ocr_every_s: float = 1.0  # entre leituras, o cronômetro é descontado pelo relógio
     max_candle_height_ratio: float = 4.0  # vela atual mais alta que N x a maior recente = suspeita
     expiry_max_age_s: float = 5.0  # expiração escolhida e relógio da IQ
+    relayout_after_bad_s: float = 4.0  # leitura ruim por N s seguidos: procura tudo de novo
     timeframe_max_age_s: float = 15.0  # reler o eixo de horas (a pessoa pode trocar 5m -> 1m)
 
 
@@ -132,6 +133,7 @@ class ChartReader:
         self._label_cache = _OcrCache()
         self._new_text_caches()
         self._track: Optional[dict] = None  # memória da vela atual entre quadros
+        self._bad_since: Optional[float] = None  # desde quando a leitura está ruim
         self.last_tokens: list[OcrToken] = []  # do último OCR de tela inteira (debug)
 
     def reset(self) -> None:
@@ -142,6 +144,7 @@ class ChartReader:
         self._label_cache = _OcrCache()
         self._new_text_caches()
         self._track = None
+        self._bad_since = None
 
     def _new_text_caches(self) -> None:
         self._purchase_cache = _OcrCache()
@@ -153,10 +156,17 @@ class ChartReader:
 
     def read(self, bgr: np.ndarray) -> ChartReading:
         try:
-            return self._read(bgr)
+            r = self._read(bgr)
         except Exception as e:  # nunca derruba o app por erro de leitura
             log.exception("erro na leitura")
-            return ChartReading(ok=False, reasons=[f"erro interno na leitura: {e!r}"])
+            r = ChartReading(ok=False, reasons=[f"erro interno na leitura: {e!r}"])
+        bad = (not r.ok) or r.timer_seconds is None or r.purchase_seconds is None
+        if bad:
+            if self._bad_since is None:
+                self._bad_since = time.monotonic()
+        else:
+            self._bad_since = None
+        return r
 
     # ------------------------------------------------------------ internals
 
@@ -191,6 +201,9 @@ class ChartReader:
         lay = self.layout
         if lay is None:
             return True
+        if self._bad_since is not None and time.monotonic() - self._bad_since >= self.cfg.relayout_after_bad_s:
+            self._bad_since = None
+            return True  # a tela mudou (painel aberto/fechado, outra página): refaz o layout
         if (lay.width, lay.height) != (bgr.shape[1], bgr.shape[0]):
             return True
         if lay.axis is None:
@@ -279,6 +292,16 @@ class ChartReader:
             reading.ok = False
         if scale is None or scale.residual_px > self.cfg.max_residual_px:
             reading.ok = False
+
+        if scale is not None and scale.inliers < self.cfg.min_axis_labels:
+            ok2 = False
+            if label is not None:
+                tol = max(4.0, 0.006 * (lay.axis.h if lay.axis else 600))
+                ok2 = abs(scale.y_of(label[1]) - label[0]) <= tol
+            if not ok2:
+                reading.ok = False
+                reading.reasons.append("eixo com só 2 rótulos e a etiqueta do preço não confere")
+                self._axis_cache = _OcrCache()
 
         if scale is not None:
             # A grade pode ter poucas casas (1.105) mas a resolução do gráfico é bem maior:
@@ -441,6 +464,12 @@ class ChartReader:
             cache.labels = labels
         labels = cache.labels
         scale = fit_scale(labels, tol_px=self.cfg.axis_tol_px, min_inliers=self.cfg.min_axis_labels)
+        if scale is None and len(labels) >= 2:
+            # Gráfico baixo (painel de posições aberto, zoom): só 2 rótulos à vista.
+            # Vale apenas se a etiqueta do preço atual cair no lugar certo (conferido em _read).
+            scale = fit_scale(labels, tol_px=self.cfg.axis_tol_px, min_inliers=2)
+            if scale is not None:
+                reading.warnings.append("eixo com só 2 rótulos: conferido pela etiqueta do preço")
         if scale is None:
             reading.reasons.append(f"eixo de preço ilegível ({len(labels)} rótulos lidos)")
             self._axis_cache = _OcrCache()  # tenta de novo no próximo quadro

@@ -1,0 +1,15 @@
+{
+ "_nota": "Captura do CandleSense.app no Mac com o painel 'Total portfolio' aberto: gráfico baixo, só 2 rótulos no eixo de preço (conferido pela etiqueta). Avatar e saldo borrados.",
+ "expect_ok": true,
+ "payout": 86,
+ "timer_seconds": 75,
+ "tempo_compra_s": 45,
+ "tempo_vela_s": 300,
+ "expiracao": "20:30",
+ "tolerancia": 1e-06,
+ "ultimas_velas": [
+  {
+   "close": 1.111591
+  }
+ ]
+}
