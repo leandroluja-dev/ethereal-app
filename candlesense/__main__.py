@@ -198,6 +198,12 @@ def cmd_live(args) -> int:
     print(f"Captura: {src.name}. Ctrl+C para sair.")
     reader = ChartReader(best_engine(args.ocr))
     engine = _engine(args)
+    from .history.scoreboard import learn
+    from .history.store import Store
+
+    store = Store(Path(args.dados) / "candlesense.db")
+    engine.calibration = learn(store.predictions())
+    last_learn = time.monotonic()
     print(f"OCR: {reader.ocr.name}")
     panel = None
     if not args.sem_painel:
@@ -237,6 +243,14 @@ def cmd_live(args) -> int:
             r = reader.read(img)
             r.timings_ms = {"captura": cap_ms, **r.timings_ms}
             dec = engine.evaluate(r)
+            try:
+                asset = (reader.layout.asset if reader.layout else None) or "?"
+                store.record(r, dec, asset=asset)
+                if time.monotonic() - last_learn > 600:  # reaprende a correção a cada 10 min
+                    engine.calibration = learn(store.predictions())
+                    last_learn = time.monotonic()
+            except Exception as e:  # o histórico nunca derruba a leitura
+                print(f"histórico: {e!r}", flush=True)
             if dec.signal and dec.action != prev_signal and not args.sem_som:
                 from .alerts import play
 
@@ -353,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--atraso", type=float, default=3.0,
                     help="seu tempo de reação em segundos (padrão 3): o aviso vem com essa folga")
     ap.add_argument("--sem-som", action="store_true", help="sem avisos sonoros")
+    ap.add_argument("--dados", default="dados", help="pasta do histórico (padrão ./dados)")
     ap.add_argument("--margem", type=float, default=2.0,
                     help="pontos percentuais acima do equilíbrio do payout para sinalizar (padrão 2)")
     ap.add_argument("--app", action="store_true", help=argparse.SUPPRESS)  # aberto pelo CandleSense.app

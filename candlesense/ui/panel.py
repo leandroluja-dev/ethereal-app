@@ -243,8 +243,12 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
     if reading is not None and reading.timings_ms:
         status += f" · {sum(reading.timings_ms.values()):.0f} ms"
     c.para(status, 12, DIM)
-    c.para("Probabilidade por regras, ainda sem calibração (o placar vem na Fase 3). "
-           "O CandleSense só lê a tela: nunca clica e nunca opera.", 11, DIM)
+    if d.calibrated:
+        c.para("Probabilidade corrigida pelo placar (acertos e erros já conferidos). "
+               "O CandleSense só lê a tela: nunca clica e nunca opera.", 11, DIM)
+    else:
+        c.para("Probabilidade por regras, ainda sem correção: o placar está juntando dados. "
+               "O CandleSense só lê a tela: nunca clica e nunca opera.", 11, DIM)
     return c.crop()
 
 

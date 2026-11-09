@@ -43,12 +43,12 @@ def find_axis(tokens: list[OcrToken], det: CandleDetection, img_w: int, img_h: i
         and t.box.x > last_x
         and band_top <= t.box.cy <= band_bot
     ]
-    if len(nums) < 3:
+    if len(nums) < 2:
         return None
     groups = _cluster([t.box.x2 for t in nums], tol=max(12.0, 0.012 * img_w))
     groups += _cluster([t.box.x for t in nums], tol=max(12.0, 0.012 * img_w))
     best = max(groups, key=len)
-    if len(best) < 3:
+    if len(best) < 2:
         return None
     sel = [nums[i] for i in best]
     x1 = min(t.box.x for t in sel)
@@ -58,6 +58,13 @@ def find_axis(tokens: list[OcrToken], det: CandleDetection, img_w: int, img_h: i
     # A área do gráfico não muda quando a escala muda, só os números.
     cys = sorted(t.box.cy for t in sel)
     spacing = float(np.median(np.diff(cys))) if len(cys) >= 2 else 20.0
+    if len(sel) < 3:
+        # Gráfico baixo: poucos rótulos. A área vai das velas até meia altura além delas.
+        x1 = max(0, min(t.box.x for t in sel) - max(6, int(0.004 * img_w)))
+        x2 = min(img_w, max(t.box.x2 for t in sel) + 3 * max(6, int(0.004 * img_w)))
+        y1 = int(max(0, min(cbox.y - 0.25 * cbox.h, min(t.box.y for t in sel) - 10)))
+        y2 = int(min(img_h, max(cbox.y2 + 0.25 * cbox.h, max(t.box.y2 for t in sel) + 10)))
+        return Box(x1, y1, x2 - x1, y2 - y1)
     # Meio espaçamento: não pode invadir painéis de indicador logo abaixo (RSI etc.).
     y1 = int(max(0, min(t.box.y for t in sel) - 0.5 * spacing))
     y2 = int(min(img_h, max(t.box.y2 for t in sel) + 0.5 * spacing))
@@ -212,6 +219,22 @@ def find_payout(tokens: list[OcrToken], axis: Optional[Box], img_w: int, img_h: 
     return best.box.expand(best.box.w // 2 + 6, best.box.h // 2 + 2, img_w, img_h)
 
 
+_ASSET_RE = __import__("re").compile(r"\b([A-Z]{3,5})\s*/\s*([A-Z]{3,5})\b(\s*\(OTC\))?")
+
+
+def find_asset(tokens: list[OcrToken], det: CandleDetection) -> Optional[str]:
+    """Nome do ativo (ex.: 'EUR/USD (OTC)'): o maior texto do tipo AAA/BBB na tela."""
+    cands = []
+    for t in tokens:
+        m = _ASSET_RE.search(t.text.upper())
+        if m:
+            name = f"{m.group(1)}/{m.group(2)}" + (" (OTC)" if m.group(3) or "OTC" in t.text.upper() else "")
+            cands.append((t.box.h, name))
+    if not cands:
+        return None
+    return max(cands)[1]
+
+
 def build_layout(bgr: np.ndarray, det: CandleDetection, tokens: list[OcrToken]) -> Layout:
     h, w = bgr.shape[:2]
     cbox = det.box
@@ -231,5 +254,6 @@ def build_layout(bgr: np.ndarray, det: CandleDetection, tokens: list[OcrToken]) 
         candle_pitch=det.pitch, candle_width=det.body_width,
         axis=axis, timer=timer, payout=payout,
         purchase=purchase, expiry=expiry, clock=clock, time_axis=time_axis, timeframe_s=timeframe,
+        asset=find_asset(tokens, det),
         green_hsv=det.green_hsv, red_hsv=det.red_hsv,
     )

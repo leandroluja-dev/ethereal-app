@@ -65,6 +65,7 @@ class EngineConfig:
 class HorizonProb:
     candles: int
     p_up: float
+    p_raw: Optional[float] = None  # antes da correção do placar (é o que o placar grava)
 
     @property
     def direction(self) -> str:
@@ -93,6 +94,7 @@ class Decision:
     expiry_hint: str = ""  # comparação com a expiração escolhida na IQ
     agree: int = 0
     decimals: int = 5
+    calibrated: bool = False  # probabilidade corrigida pelo placar
 
     @property
     def signal(self) -> bool:
@@ -168,8 +170,9 @@ def candle_phase(elapsed_frac: Optional[float]) -> Optional[str]:
 
 
 class RuleEngine:
-    def __init__(self, cfg: Optional[EngineConfig] = None) -> None:
+    def __init__(self, cfg: Optional[EngineConfig] = None, calibration=None) -> None:
         self.cfg = cfg or EngineConfig()
+        self.calibration = calibration  # history.scoreboard.Calibration, aprendida do placar
         self._last_action: Optional[str] = None
         self._streak = 0
 
@@ -200,8 +203,11 @@ class RuleEngine:
             # Média ponderada pela confiança: módulo sem opinião pesa pouco.
             edge = (num / den) if den > 1e-9 else 0.0  # -1 ... +1
             edge *= fator * quality
-            p_up = 0.5 + cfg.max_edge[i] * max(-1.0, min(1.0, edge))
-            out.append(HorizonProb(h, p_up))
+            raw = 0.5 + cfg.max_edge[i] * max(-1.0, min(1.0, edge))
+            p_up = raw
+            if self.calibration is not None and self.calibration.active:
+                p_up = self.calibration.apply(h, raw)
+            out.append(HorizonProb(h, p_up, raw))
         return out
 
     # ------------------------------------------------------------ internals
@@ -225,7 +231,8 @@ class RuleEngine:
         hs = self.probabilities(mods, quality)
         best = max(hs, key=lambda h: (h.prob, -h.candles))
         phase = candle_phase(ctx.elapsed_frac)
-        d = Decision(NAO_ENTRAR, horizons=hs, best=best, modules=mods, phase=phase,
+        cal = self.calibration is not None and self.calibration.active
+        d = Decision(NAO_ENTRAR, horizons=hs, best=best, modules=mods, phase=phase, calibrated=cal,
                      seconds_to_enter=(None if r.purchase_seconds is None
                                        else max(0, r.purchase_seconds - cfg.reaction_s)),
                      timeframe_s=r.timeframe_s, decimals=ctx.decimals)

@@ -1,0 +1,21 @@
+{
+ "_nota": "Painel de posições aberto e a etiqueta do preço cobrindo o rótulo 1.110: só 1 rótulo legível. A escala sai do passo da grade e é conferida pela etiqueta. Avatar e saldo borrados.",
+ "expect_ok": true,
+ "payout": 86,
+ "timer_seconds": 162,
+ "tempo_compra_s": 12,
+ "tempo_vela_s": 300,
+ "expiracao": "20:38",
+ "tolerancia": 2e-05,
+ "ultimas_velas": [
+  {
+   "close": 1.111799,
+   "open": 1.11017
+  },
+  {
+   "open": 1.111844,
+   "close": 1.110577
+  },
+  {}
+ ]
+}

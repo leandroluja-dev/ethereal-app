@@ -142,6 +142,7 @@ class Layout:
     clock: Optional[Box] = None  # "CURRENT TIME ... HH:MM:SS"
     time_axis: Optional[Box] = None  # faixa dos rótulos de hora abaixo do gráfico
     timeframe_s: Optional[int] = None  # tempo de cada vela, em segundos
+    asset: Optional[str] = None  # ativo do gráfico, ex.: "EUR/USD (OTC)"
     green_hsv: Optional[tuple[int, int, int]] = None
     red_hsv: Optional[tuple[int, int, int]] = None
 

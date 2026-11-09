@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 
 from ..models import Box, Candle, ChartReading, Layout, OcrToken, PriceScale
-from .axis import axis_labels, fit_scale, grid_profile, snap_to_grid
+from .axis import axis_labels, fit_scale, grid_lines, grid_profile, scale_from_grid, snap_to_grid
 from .candles import ColorConfig, CandleDetection, detect_candles, measure_forming
 from .layout import build_layout, timeframe_from_axis
 from .ocr import OcrEngine, is_clock_text, parse_clock, parse_number, parse_payout, parse_timer
@@ -52,6 +52,7 @@ class _OcrCache:
         self.value: Optional[int] = None  # último valor lido (cronômetro)
         self.tokens: list[OcrToken] = []
         self.labels: list[tuple[float, float, int]] = []
+        self.lines: list[float] = []  # linhas da grade (y)
 
 
 def _crop_key(bgr: np.ndarray, box: Box, ignore_colored_rows: bool = False) -> str:
@@ -266,8 +267,8 @@ class ChartReader:
         if lay.axis is None:
             reading.reasons.append("eixo de preço não encontrado")
         else:
-            scale = self._axis_scale(bgr, lay, reading)
             label = self._current_price_label(bgr, lay)
+            scale = self._axis_scale(bgr, lay, reading, label)
         timings["eixo"] = (time.perf_counter() - t) * 1000
         reading.scale = scale
 
@@ -444,7 +445,8 @@ class ChartReader:
         c.t = now
         return c.value
 
-    def _axis_scale(self, bgr: np.ndarray, lay: Layout, reading: ChartReading) -> Optional[PriceScale]:
+    def _axis_scale(self, bgr: np.ndarray, lay: Layout, reading: ChartReading,
+                    price_label: Optional[tuple[float, float, int]] = None) -> Optional[PriceScale]:
         assert lay.axis is not None
         # Os rótulos do eixo só mudam quando a escala muda. Reaproveita por alguns segundos;
         # se a escala mudar nesse meio tempo, a etiqueta do preço atual não confere,
@@ -459,6 +461,7 @@ class ChartReader:
                 lh = float(np.median([tk.box.h for tk in tokens])) if tokens else 10.0
                 prof = grid_profile(bgr, lay.chart.x, lay.axis.x, lay.axis.y, lay.axis.y2)
                 labels = snap_to_grid(labels, prof, lh)
+                cache.lines = grid_lines(bgr, lay.chart.x, lay.axis.x, lay.axis.y, lay.axis.y2)
             cache.tokens = tokens
             cache.t = time.monotonic()
             cache.labels = labels
@@ -470,6 +473,12 @@ class ChartReader:
             scale = fit_scale(labels, tol_px=self.cfg.axis_tol_px, min_inliers=2)
             if scale is not None:
                 reading.warnings.append("eixo com só 2 rótulos: conferido pela etiqueta do preço")
+        if scale is None and labels and price_label is not None:
+            # 1 rótulo à vista (a etiqueta do preço pode cobrir outro): usa o passo da grade.
+            scale = scale_from_grid(labels, getattr(cache, "lines", []), price_label)
+            if scale is not None:
+                scale.inliers = min(scale.inliers, 2)  # força a conferência pela etiqueta em _read
+                reading.warnings.append("eixo pelo passo da grade: conferido pela etiqueta do preço")
         if scale is None:
             reading.reasons.append(f"eixo de preço ilegível ({len(labels)} rótulos lidos)")
             self._axis_cache = _OcrCache()  # tenta de novo no próximo quadro
