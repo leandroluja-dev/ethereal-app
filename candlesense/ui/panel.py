@@ -221,6 +221,7 @@ class PanelWindow:
         self.scale = scale
         cv2.namedWindow(self.NAME, cv2.WINDOW_AUTOSIZE)
         self._topmost()
+        self._seen_open = False
 
     def _topmost(self) -> None:
         try:
@@ -232,11 +233,19 @@ class PanelWindow:
         self.cv2.imshow(self.NAME, render(decision, reading, self.scale))
 
     def is_open(self) -> bool:
+        """Falso só se a janela já foi vista aberta e agora sumiu (bolinha vermelha).
+
+        Em alguns sistemas o OpenCV não informa a propriedade (devolve -1 sempre);
+        nesse caso a janela é considerada aberta e o painel fecha só com q/Esc.
+        """
         try:
-            # -1 = a janela não existe mais (fechada pela bolinha vermelha).
-            return self.cv2.getWindowProperty(self.NAME, self.cv2.WND_PROP_AUTOSIZE) >= 0
+            v = self.cv2.getWindowProperty(self.NAME, self.cv2.WND_PROP_VISIBLE)
         except Exception:
             return True
+        if v >= 1:
+            self._seen_open = True
+            return True
+        return not self._seen_open
 
     def close(self) -> None:
         try:

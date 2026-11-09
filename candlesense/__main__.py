@@ -185,6 +185,7 @@ def cmd_live(args) -> int:
         save_dir.mkdir(parents=True, exist_ok=True)
     last_save = 0.0
     last_action = None
+    last_log = 0.0
     fails = 0
     try:
         while True:
@@ -209,7 +210,8 @@ def cmd_live(args) -> int:
             total = (time.perf_counter() - t0) * 1000
             line = f"[{time.strftime('%H:%M:%S')}] {dec.summary()} | {r.summary()} | total {total:.0f}ms"
             if APP_MODE:
-                if dec.action != last_action:  # no log, só quando a decisão muda
+                if dec.action != last_action or time.monotonic() - last_log >= 60:  # log enxuto
+                    last_log = time.monotonic()
                     print(line[:300], flush=True)
                     last_action = dec.action
             else:
@@ -217,8 +219,10 @@ def cmd_live(args) -> int:
             if panel is not None:
                 panel.show(dec, r)
                 if not (args.debug or save_dir) and cv2.waitKey(1) & 0xFF in (27, ord("q")):
+                    print("fechado com q/Esc", flush=True)
                     break
                 if not panel.is_open():
+                    print("painel fechado pela janela", flush=True)
                     break  # fechou pela bolinha vermelha
             if args.debug or save_dir:
                 ov = draw(img, r)
