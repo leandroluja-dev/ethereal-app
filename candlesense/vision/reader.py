@@ -340,15 +340,17 @@ class ChartReader:
             scale.decimals = dec  # a etiqueta tem mais casas que a grade (ex.: 1.107005)
         if not pc.body_certain:
             # Corpo encoberto pela linha do preço: o corpo está na etiqueta.
+            # Só aceita "doji encoberto" se a etiqueta cair onde o corpo deveria estar
+            # (a linha mais larga que sobrou). Fora disso é chute: leitura incerta.
             y = scale.y_of(price)
-            if pc.high_y - 2 <= y <= pc.low_y + 3:
+            if pc.body_top_y - 2 <= y <= pc.body_bottom_y + 3:
                 last.open = last.close = price
                 last.high = max(last.high, price)
                 last.low = min(last.low, price)
                 reading.current_price = price
                 return
             reading.ok = False
-            reading.reasons.append("etiqueta do preço fora da vela atual")
+            reading.reasons.append("corpo da vela atual encoberto (linha por cima?)")
             return
         dpx = abs(scale.y_of(price) - scale.y_of(last.close))
         if dpx > self.cfg.label_tol_px:
