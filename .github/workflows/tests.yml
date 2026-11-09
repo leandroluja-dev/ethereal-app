@@ -1,0 +1,30 @@
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Bibliotecas do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0
+      - name: Instalar
+        run: python -m pip install -r requirements-dev.txt
+      - name: Testes
+        run: python -m pytest -q
+      - name: Captura no Windows (sem IQ Option aberta deve responder "Abra a IQ Option")
+        if: runner.os == 'Windows'
+        run: |
+          python -c "from candlesense.capture.window import set_dpi_awareness; print('dpi', set_dpi_awareness())"
+          python -c "from candlesense.config import Config; from candlesense.capture.grabber import LiveWindowSource; from candlesense.vision.analyzer import FrameAnalyzer; from candlesense.vision.ocr import NullOcr; c=Config(); f=LiveWindowSource(c.capture).grab(); r=FrameAnalyzer(c, NullOcr()).analyze(f); print(f.status_hint, '->', r.message); assert r.message == 'Abra a IQ Option'"

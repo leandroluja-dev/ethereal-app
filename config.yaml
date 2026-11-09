@@ -1,0 +1,50 @@
+# CandleSense — configuração.
+# Tudo aqui é opcional: os valores abaixo já são os padrões e o app funciona sem mexer.
+# Apague uma linha para voltar ao padrão.
+
+capture:
+  fps: 8                      # quadros por segundo analisados (5 a 10)
+  # Títulos de janela aceitos (expressões regulares, sem diferenciar maiúsculas).
+  # Cobre o app desktop ("IQ Option") e o navegador ("... IQ Option - Google Chrome").
+  title_patterns: ['iq\s*option', 'iqoption']
+  exclude_title_patterns: ['candlesense']
+  panel_width: 360            # largura do painel no "Ajustar janela" (pixels)
+  exclude_panel_from_capture: true   # o painel fica invisível para a captura (pode cobrir o gráfico)
+  window_check_interval_s: 1.0
+
+vision:
+  min_body_width_px: 3        # abaixo disso: "aumente o zoom do gráfico"
+  min_pitch_px: 5
+  min_candles: 15             # velas visíveis para confiança total
+  chroma_min: 50              # intensidade mínima de cor para considerar um pixel "colorido"
+  val_min: 60
+  hue_tolerance: 12           # tolerância de matiz das cores das velas
+  bg_tolerance: 28
+  color_refresh_s: 30         # redescobre as cores das velas a cada N segundos
+  axis_change_threshold: 3.0  # sensibilidade para reler o eixo de preço
+  hud_ocr_interval_s: 2.0     # relê payout e ativo a cada N segundos
+  layout_retry_s: 3.0
+  min_confidence: 0.6         # abaixo disso: "leitura incerta"
+  timer_source: auto          # auto | ocr | clock
+  clock_offset_s: 0.0         # ajuste do relógio do PC em relação ao da corretora (segundos)
+  assume_timeframe_min: null  # fixe 1 ou 5 se o eixo de tempo não puder ser lido
+  manual_plot_rect: null      # plano B: [x, y, largura, altura] da área das velas (o botão de debug preenche)
+
+ocr:
+  backend: auto               # auto | rapidocr | tesseract
+  tesseract_cmd: null         # ex.: 'C:\Program Files\Tesseract-OCR\tesseract.exe'
+  min_text_height_px: 24
+
+replay:
+  dir: recordings
+  record_fps: 2
+  image_format: png
+
+ui:
+  always_on_top: true
+  debug_on_start: false
+  opacity: 0.97
+
+logging:
+  level: INFO
+  dir: logs

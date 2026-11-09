@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "candlesense"
+version = "0.1.0"
+description = "Assistente de decisão que lê o gráfico de velas da IQ Option na tela (somente leitura)."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "numpy>=1.26",
+  "opencv-python>=4.9",
+  "mss>=9.0",
+  "PyYAML>=6.0",
+  "pandas>=2.1",
+  "PyQt6>=6.6",
+  "rapidocr-onnxruntime>=1.3",
+  "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+candlesense = "candlesense.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["candlesense*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["ocr: testes que usam o OCR real (RapidOCR)"]
