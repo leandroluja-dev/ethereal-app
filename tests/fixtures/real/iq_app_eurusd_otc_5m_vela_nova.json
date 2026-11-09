@@ -1,0 +1,12 @@
+{
+ "_nota": "Mesmo gr\u00e1fico 4 min depois: vela de 5 min rec\u00e9m-aberta, quase um doji na linha do pre\u00e7o. Avatar e saldo borrados.",
+ "expect_ok": true,
+ "payout": 86,
+ "timer_seconds": 242,
+ "tolerancia": 1e-06,
+ "ultimas_velas": [
+  {
+   "close": 1.107015
+  }
+ ]
+}
