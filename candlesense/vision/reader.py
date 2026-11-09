@@ -8,6 +8,7 @@ O leitor nunca lança exceção para quem chama.
 from __future__ import annotations
 
 import hashlib
+import math
 import logging
 import time
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ import numpy as np
 
 from ..models import Box, Candle, ChartReading, Layout, OcrToken, PriceScale
 from .axis import axis_labels, fit_scale, grid_profile, snap_to_grid
-from .candles import ColorConfig, CandleDetection, detect_candles
+from .candles import ColorConfig, CandleDetection, detect_candles, measure_forming
 from .layout import build_layout
 from .ocr import OcrEngine, parse_number, parse_payout, parse_timer
 
@@ -210,7 +211,7 @@ class ChartReader:
 
         reading = ChartReading(ok=True, layout=self.layout, timings_ms=timings)
         reading.reasons.extend(det.reasons)
-        reading.pixel_candles = det.candles
+        reading.pixel_candles = list(det.candles)
         lay = self.layout
         if lay is None or not det.candles:
             reading.ok = False
@@ -252,7 +253,11 @@ class ChartReader:
             reading.ok = False
 
         if scale is not None:
-            dec = scale.decimals
+            # A grade pode ter poucas casas (1.105) mas a resolução do gráfico é bem maior:
+            # arredonda na casa que um pixel consegue distinguir, nunca menos que a etiqueta.
+            px_dec = int(math.ceil(-math.log10(scale.price_per_px / 2))) if scale.price_per_px > 0 else 0
+            dec = max(scale.decimals, px_dec, label[2] if label else 0)
+            scale.decimals = dec
             n = len(det.candles)
             for i, pc in enumerate(det.candles):
                 def p(y: int) -> float:
@@ -263,13 +268,14 @@ class ChartReader:
                 ))
             reading.current_price = reading.candles[-1].close if reading.candles else None
             if label is not None and reading.candles:
-                self._apply_price_label(reading, scale, label)
+                self._apply_price_label(reading, scale, label, bgr, det)
             elif det.candles and not det.candles[-1].body_certain:
                 reading.ok = False
                 reading.reasons.append("corpo da vela atual encoberto e etiqueta do preço não lida")
-            if len(det.candles) >= 6:
-                prev_h = max(pc.low_y - pc.high_y + 1 for pc in det.candles[-21:-1])
-                last_h = det.candles[-1].low_y - det.candles[-1].high_y + 1
+            pcs = reading.pixel_candles
+            if len(pcs) >= 6:
+                prev_h = max(pc.low_y - pc.high_y + 1 for pc in pcs[-21:-1])
+                last_h = pcs[-1].low_y - pcs[-1].high_y + 1
                 if last_h > self.cfg.max_candle_height_ratio * prev_h:
                     reading.ok = False
                     reading.reasons.append("vela atual alta demais: algo sobreposto a ela (linha vertical?)")
@@ -330,38 +336,47 @@ class ChartReader:
         return None
 
     def _apply_price_label(self, reading: ChartReading, scale: PriceScale,
-                           label: tuple[float, float, int]) -> None:
-        """Confere a vela atual com a etiqueta do preço e usa o valor exato dela."""
-        last = reading.candles[-1]
-        pc = reading.pixel_candles[-1]
-        price = label[1]
-        dec = label[2]
+                           label: tuple[float, float, int], bgr: np.ndarray,
+                           det: CandleDetection) -> None:
+        """Remede a vela atual a partir da etiqueta do preço (fechamento exato).
+
+        A vela atual tem um brilho por cima e às vezes acabou de abrir (sem
+        corpo ainda). Procura primeiro uma vela nova um passo à direita da
+        última detectada; se não houver, remede a última. Se nenhuma encostar
+        no preço da etiqueta, a leitura fica incerta.
+        """
+        price, dec = label[1], label[2]
         if dec > scale.decimals:
             scale.decimals = dec  # a etiqueta tem mais casas que a grade (ex.: 1.107005)
-        if not pc.body_certain:
-            # Corpo encoberto pela linha do preço: o corpo está na etiqueta.
-            # Só aceita "doji encoberto" se a etiqueta cair onde o corpo deveria estar
-            # (a linha mais larga que sobrou). Fora disso é chute: leitura incerta.
-            y = scale.y_of(price)
-            wick_only = pc.body_right - pc.body_left <= 1  # sobrou só o pavio: corpo pode estar em qualquer ponto
-            lo, hi = (pc.high_y, pc.low_y) if wick_only else (pc.body_top_y, pc.body_bottom_y)
-            if lo - 2 <= y <= hi + 3:
-                last.open = last.close = price
-                last.high = max(last.high, price)
-                last.low = min(last.low, price)
-                reading.current_price = price
-                return
+        lay = self.layout
+        assert lay is not None and lay.axis is not None
+        y = scale.y_of(price)
+        pcs = reading.pixel_candles
+        last = pcs[-1]
+        y_lo, y_hi = lay.axis.y, lay.axis.y2
+        max_h = self.cfg.max_candle_height_ratio * max(pc.low_y - pc.high_y + 1 for pc in pcs[-21:])
+        new = measure_forming(bgr, last.x_center + det.pitch, det.body_width, y, y_lo, y_hi, max_h)
+        replace = False
+        if new is None:
+            new = measure_forming(bgr, last.x_center, det.body_width, y, y_lo, y_hi, max_h)
+            replace = True
+        if new is None:
             reading.ok = False
-            reading.reasons.append("corpo da vela atual encoberto (linha por cima?)")
-            return
-        dpx = abs(scale.y_of(price) - scale.y_of(last.close))
-        if dpx > self.cfg.label_tol_px:
-            reading.ok = False
-            reading.reasons.append(
-                f"preço atual da etiqueta ({price}) não confere com a vela ({dpx:.1f}px)")
+            reading.reasons.append(f"nenhuma vela encosta no preço atual da etiqueta ({price})")
             self._axis_cache = _OcrCache()  # a escala pode ter mudado: relê o eixo
             return
-        last.close = price
-        last.high = max(last.high, price)
-        last.low = min(last.low, price)
+
+        def p(row: int) -> float:
+            return round(scale.price(row + 0.5), scale.decimals)
+
+        op = p(new.open_y) if new.body_certain else price
+        candle = Candle(open=op, high=max(p(new.high_y), price, op), low=min(p(new.low_y), price, op),
+                        close=price, color=new.color, forming=True, x_center=new.x_center)
+        if replace:
+            pcs[-1] = new
+            reading.candles[-1] = candle
+        else:
+            reading.candles[-1].forming = False
+            pcs.append(new)
+            reading.candles.append(candle)
         reading.current_price = price

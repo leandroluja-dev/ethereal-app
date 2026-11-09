@@ -25,7 +25,9 @@ class ColorConfig:
     """Faixas HSV (OpenCV: H 0-180, S e V 0-255) das velas no tema escuro."""
 
     green_h: tuple[int, int] = (35, 95)
-    red_h_low: int = 12  # vermelho: H <= red_h_low ou H >= red_h_high
+    # vermelho: H <= red_h_low ou H >= red_h_high. Vai até 22 porque a vela atual
+    # da IQ Option tem um brilho verde por cima que deixa o vermelho alaranjado.
+    red_h_low: int = 22
     red_h_high: int = 165
     min_s: int = 70
     min_v: int = 70
@@ -345,14 +347,14 @@ def detect_candles(
         det.reasons.append("sequência de velas não encontrada")
         return det
     main = max(chains, key=lambda c: (len(c), blobs[c[-1]].cx))
-    if len(main) < min_candles:
-        det.reasons.append(f"só {len(main)} velas em sequência")
     # Refina o passo com a sequência principal.
     mx = [blobs[i].cx for i in main]
     if len(mx) >= 2:
         pitch = float((mx[-1] - mx[0]) / (len(mx) - 1))
 
     main = _extend(main, blobs, widths, bw + wtol, pitch, tol, max_vgap)
+    if len(main) < min_candles:
+        det.reasons.append(f"só {len(main)} velas em sequência")
 
     end_x = blobs[main[-1]].cx
     main_top = min(blobs[i].y for i in main)
@@ -403,3 +405,80 @@ def detect_candles(
             else:
                 det.red_hsv = med  # type: ignore[assignment]
     return det
+
+
+def measure_forming(bgr: np.ndarray, x_center: float, body_w: int, label_y: float,
+                    y_lo: int, y_hi: int, max_h: float = 1e9) -> PixelCandle | None:
+    """Mede a vela atual usando a etiqueta do preço como referência do fechamento.
+
+    A IQ Option desenha um brilho verde (um ponto) em cima do preço atual, que
+    muda a cor da vela atual (vermelho vira laranja). Aqui aceitamos qualquer
+    cor quente ou verde saturada na coluna da vela, sem azul/roxo (médias e RSI)
+    nem amarelo puro (média móvel). O fechamento é a etiqueta; a abertura é a
+    ponta do corpo mais longe dela.
+    """
+    h = bgr.shape[0]
+    half = max(1, body_w // 2)
+    x1, x2 = int(round(x_center - half)), int(round(x_center + half)) + 1
+    y_lo, y_hi = max(0, y_lo), min(h, y_hi)
+    if x2 <= x1 or y_hi <= y_lo:
+        return None
+    hsv = cv2.cvtColor(bgr[y_lo:y_hi, x1:x2], cv2.COLOR_BGR2HSV)
+    hh, ss, vv = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    # Amarelo puro (H 26-31 e bem saturado) é a média móvel; o corpo vermelho sob o
+    # brilho verde também fica amarelado, mas menos saturado (S ~140-170).
+    yellow_ma = (hh >= 26) & (hh <= 31) & (ss >= 190)
+    ok = (ss >= 90) & (vv >= 90) & ~yellow_ma & ~((hh >= 88) & (hh <= 160))
+    # Colunas coloridas no topo e na base do painel ao mesmo tempo são a linha
+    # vertical da hora da compra (tracejada) passando pela vela: saem da conta.
+    band = max(3, int(0.15 * ok.shape[0]))
+    line_cols = ok[:band].any(axis=0) & ok[-band:].any(axis=0) & (ok.sum(axis=0) > 0.25 * ok.shape[0])
+    ok[:, line_cols] = False
+    cover = ok.sum(axis=1)
+    ly = int(round(label_y - 0.5)) - y_lo
+    if not (0 <= ly < len(cover)):
+        return None
+    # corpo: linhas com cobertura de pelo menos metade da largura
+    body = cover >= max(2, int(0.5 * (x2 - x1)))
+    near = [r for r in range(max(0, ly - 3), min(len(cover), ly + 4)) if body[r]]
+    if near:
+        r0 = r1 = near[0]
+        while r0 - 1 >= 0 and body[r0 - 1]:
+            r0 -= 1
+        while r1 + 1 < len(cover) and body[r1 + 1]:
+            r1 += 1
+    else:
+        # sem corpo encostando no preço: doji, desde que haja pavio passando ali
+        if not any(cover[max(0, ly - 3): ly + 4] > 0):
+            return None
+        r0 = r1 = ly
+    # pavio: segue para cima e para baixo enquanto houver pixels (tolera falhas de 3 px)
+    def walk(r: int, step: int) -> int:
+        gap = 0
+        last = r
+        while 0 <= r + step < len(cover):
+            r += step
+            if cover[r] > 0:
+                last, gap = r, 0
+            else:
+                gap += 1
+                if gap > 3:
+                    break
+        return last
+    hi_r, lo_r = walk(r0, -1), walk(r1, 1)
+    if lo_r - hi_r + 1 > max_h:
+        return None  # alto demais: é uma linha vertical (hora da compra), não vela
+    # abertura: ponta do corpo mais longe da etiqueta
+    if abs(r0 - ly) >= abs(r1 - ly):
+        open_r, color = r0, "vermelha"  # abriu em cima, preço desceu
+    else:
+        open_r, color = r1, "verde"
+    if r0 == r1:
+        color = "verde"
+    top, bot = (r0, r1)
+    return PixelCandle(
+        x_center=float(x_center), body_left=x1, body_right=x2 - 1,
+        high_y=y_lo + hi_r, low_y=y_lo + lo_r,
+        body_top_y=y_lo + top, body_bottom_y=y_lo + bot,
+        color=color, body_certain=r0 != r1,
+    )

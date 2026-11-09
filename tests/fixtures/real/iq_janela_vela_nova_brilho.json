@@ -1,0 +1,12 @@
+{
+ "_nota": "Captura da janela pelo CandleSense no Mac (ScreenCaptureKit, Retina). Avatar e saldo borrados.",
+ "expect_ok": true,
+ "payout": 86,
+ "timer_seconds": 249,
+ "tolerancia": 1e-06,
+ "ultimas_velas": [
+  {
+   "close": 1.10667
+  }
+ ]
+}
