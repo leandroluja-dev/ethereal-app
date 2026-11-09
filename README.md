@@ -1,14 +1,60 @@
 # CandleSense
 
-App para macOS que lê o gráfico da IQ Option na tela, em tempo real, e (a partir
-da Fase 2) mostra a direção mais provável do próximo movimento com probabilidade
-calibrada.
+App para macOS que lê o gráfico da IQ Option na tela, em tempo real, e mostra
+a direção mais provável do próximo movimento (COMPRA, VENDA ou NÃO ENTRAR),
+com a probabilidade, a expiração, o tempo que falta para entrar e um alvo de
+referência.
 
 **O CandleSense só lê pixels da tela.** Ele nunca clica, nunca move o mouse,
 nunca envia teclas e nunca abre operações. Não usa APIs não oficiais da IQ
 Option, então funciona igual com ativos OTC.
 
-## Estado atual: Fase 1 (captura e leitura do gráfico)
+## Estado atual: Fase 2 (sinais, motor por regras e painel)
+
+| Parte | Onde |
+|---|---|
+| Indicadores (EMA, RSI, ATR, Bollinger, topos/fundos, níveis) | `candlesense/signals/indicators.py` |
+| Módulos de sinal, cada um com nota de -1 a +1, confiança e explicação | `candlesense/signals/modules.py` |
+| Motor por regras: probabilidade por expiração, equilíbrio do payout, janela de entrada | `candlesense/engine/rules.py` |
+| Painel sempre por cima | `candlesense/ui/panel.py` |
+| Leitura de "PURCHASE TIME", expiração escolhida, relógio da IQ e tempo da vela | `candlesense/vision/layout.py`, `reader.py` |
+
+### Módulos
+
+| Módulo | O que olha |
+|---|---|
+| Tendência | média rápida (9) x lenta (21), inclinação, topos e fundos subindo/descendo |
+| Suporte e resistência | níveis com 2+ toques; preço perto de um nível; rompimentos com corpo |
+| Price action | engolfo, martelo, estrela cadente, vela de força, três velas seguidas, doji |
+| Momento | RSI 14 e variação das últimas 3 velas; RSI extremo vira risco de reversão |
+| Volatilidade | tamanho das velas recentes x o normal; fora das bandas de Bollinger. Mercado parado ou agitado demais reduz a confiança de tudo |
+| Vela atual | corpo, posição do preço na vela, pavios; confiança cresce com o tempo passado da vela |
+
+Distâncias de preço são medidas em ATR, então valem igual em qualquer ativo.
+
+### Como o motor decide
+
+1. Leitura incerta: mostra `LEITURA INCERTA` e não sinaliza.
+2. Para 1, 2, 3 e 5 velas, faz a média das notas (pesada pelo prazo e pela
+   confiança). A vela atual pesa mais em 1 vela; a tendência, em 5.
+3. Converte em probabilidade com teto: no máximo 60% enquanto as regras não
+   forem medidas contra o resultado real (placar da Fase 3, calibração na Fase 4).
+4. Só sinaliza se **tudo** isto vale:
+   - probabilidade acima do equilíbrio `1 / (1 + payout)` (86% -> 53,8%) mais a
+     margem (`--margem`, padrão 2 pontos) e mais 1 ponto no meio da vela ou 2 no fim
+     (o começo da vela é o momento preferido);
+   - "PURCHASE TIME" lido e com pelo menos 5 s;
+   - pelo menos 3 módulos concordam e no máximo 1 aponta forte para o outro lado;
+   - 20+ velas fechadas na tela;
+   - a mesma decisão em 2 leituras seguidas (não pisca).
+5. Senão, `NÃO ENTRAR` com os motivos.
+
+A expiração sugerida é a de maior probabilidade. O painel compara com a
+expiração escolhida na IQ (lida da tela) e avisa se não bater. Saída: segurar
+até o vencimento. Alvo: meio ATR por raiz do prazo, limitado pelo nível de
+suporte/resistência mais próximo.
+
+## Fase 1 (captura e leitura do gráfico)
 
 | Parte | Onde | Situação |
 |---|---|---|
@@ -33,6 +79,9 @@ candlesense/
     windows.py         acha a janela (CGWindowList)
     capture.py         ScreenCaptureKit + fallback CGWindowList + leitor de arquivos
     accessibility.py   ajuste da janela via AXUIElement
+  signals/             indicadores e módulos de sinal
+  engine/rules.py      motor por regras (probabilidade, payout, janela de entrada)
+  ui/panel.py          painel sempre por cima
   vision/              leitura do gráfico (só numpy/OpenCV, roda em qualquer sistema)
     candles.py         velas por cor, sequência com passo regular
     axis.py            rótulos do eixo -> escala y -> preço
@@ -62,7 +111,7 @@ tools/make_fixtures.py gera as capturas sintéticas de teste
    encoberta, etiqueta divergente ou erro interno viram `leitura incerta`, com
    o motivo. O leitor nunca derruba o app.
 
-## Instalação (Mac com Apple Silicon)
+## Instalação (macOS, Intel ou Apple Silicon)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -74,10 +123,14 @@ pip install -e '.[dev]'
 ```bash
 candlesense permissoes          # guia de Gravação de Tela (e --acessibilidade, opcional)
 candlesense janelas             # mostra se achou a janela da IQ Option
-candlesense --debug             # leitura ao vivo + janela de debug (q ou Esc fecha)
+candlesense                     # leitura ao vivo + painel (q ou Esc no painel fecha)
+candlesense --debug             # idem + janela de debug
 candlesense --salvar-debug dbg  # salva captura + debug a cada 5 s em ./dbg
 candlesense capturar -n 5       # salva 5 capturas em ./captures (para virar teste)
-candlesense debug captura.png   # lê uma captura salva e grava debug_out/captura_debug.png
+candlesense debug captura.png   # lê uma captura salva e grava debug + painel + json em debug_out/
+candlesense --sem-painel        # só o terminal
+candlesense --margem 3          # exige 3 pontos acima do equilíbrio do payout
+candlesense --painel-escala 1.3 # painel maior
 ```
 
 Para testar a Fase 1: abra a IQ Option (app ou navegador) em 1920x1080 a 100%,

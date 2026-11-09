@@ -52,3 +52,29 @@ def test_fit_scale_needs_three_labels_and_negative_slope():
 def test_axis_labels_ignores_text():
     toks = [OcrToken("1.08345", Box(0, 10, 50, 10)), OcrToken("Lucro", Box(0, 40, 50, 10))]
     assert axis_labels(toks) == [(15.0, 1.08345, 5)]
+
+
+def test_parse_clock_and_timeframe():
+    from candlesense.vision.ocr import parse_clock, parse_timeframe
+
+    assert parse_clock("18:16") == 18 * 3600 + 16 * 60
+    assert parse_clock("① 18:16") == 18 * 3600 + 16 * 60
+    assert parse_clock("CURRENT TIME: 9 NOVEMBER, 18:14:37 (UTC-3)", need_seconds=True) == 18 * 3600 + 14 * 60 + 37
+    assert parse_clock("18:16", need_seconds=True) is None
+    assert parse_clock("25:00") is None
+    assert parse_timeframe("5m") == 300
+    assert parse_timeframe("M15") == 900
+    assert parse_timeframe("1h") == 3600
+    assert parse_timeframe("30s") == 30
+    assert parse_timeframe("5") is None
+    assert parse_timeframe("3h") == 3 * 3600
+
+
+def test_timeframe_from_axis():
+    from candlesense.models import Box, OcrToken
+    from candlesense.vision.layout import timeframe_from_axis
+
+    toks = [OcrToken(f"{h}:00:00", Box(100 + 744 * i, 1900, 98, 24)) for i, h in enumerate(range(15, 19))]
+    assert timeframe_from_axis(toks, 62.0) == 300
+    assert timeframe_from_axis(toks, 12.4) == 60
+    assert timeframe_from_axis(toks, 40.0) is None  # fora dos tempos padrão

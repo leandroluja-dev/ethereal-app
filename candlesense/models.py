@@ -6,6 +6,18 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+def fmt_duration(seconds: float) -> str:
+    """300 -> '5 min', 30 -> '30 s', 3600 -> '1 h'."""
+    s = int(round(seconds))
+    if s % 3600 == 0 and s >= 3600:
+        return f"{s // 3600} h"
+    if s % 60 == 0 and s >= 60:
+        return f"{s // 60} min"
+    if s > 60:
+        return f"{s // 60}:{s % 60:02d} min"
+    return f"{s} s"
+
+
 @dataclass(frozen=True)
 class Box:
     """Retângulo em pixels da captura (x, y no canto superior esquerdo)."""
@@ -125,6 +137,11 @@ class Layout:
     axis: Optional[Box] = None
     timer: Optional[Box] = None
     payout: Optional[Box] = None
+    purchase: Optional[Box] = None  # "PURCHASE TIME mm:ss" (prazo para comprar)
+    expiry: Optional[Box] = None  # expiração escolhida na IQ (HH:MM)
+    clock: Optional[Box] = None  # "CURRENT TIME ... HH:MM:SS"
+    time_axis: Optional[Box] = None  # faixa dos rótulos de hora abaixo do gráfico
+    timeframe_s: Optional[int] = None  # tempo de cada vela, em segundos
     green_hsv: Optional[tuple[int, int, int]] = None
     red_hsv: Optional[tuple[int, int, int]] = None
 
@@ -143,6 +160,10 @@ class ChartReading:
     current_price: Optional[float] = None
     timer_seconds: Optional[int] = None
     payout_pct: Optional[int] = None
+    purchase_seconds: Optional[int] = None  # quanto falta para fechar a compra
+    timeframe_s: Optional[int] = None  # tempo de cada vela (60 = 1 min)
+    expiry_label: Optional[str] = None  # expiração escolhida na IQ, ex.: "18:16"
+    expiry_seconds: Optional[int] = None  # quanto falta até essa expiração
     timings_ms: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -162,6 +183,12 @@ class ChartReading:
             parts.append(f"cronômetro={self.timer_seconds}s")
         if self.payout_pct is not None:
             parts.append(f"payout={self.payout_pct}%")
+        if self.timeframe_s is not None:
+            parts.append(f"vela={fmt_duration(self.timeframe_s)}")
+        if self.purchase_seconds is not None:
+            parts.append(f"compra={self.purchase_seconds}s")
+        if self.expiry_label is not None:
+            parts.append(f"expiração={self.expiry_label}")
         if self.timings_ms:
             parts.append(f"tempo={sum(self.timings_ms.values()):.0f}ms")
         if self.reasons:

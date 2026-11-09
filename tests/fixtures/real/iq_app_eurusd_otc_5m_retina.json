@@ -3,6 +3,13 @@
  "expect_ok": true,
  "payout": 86,
  "timer_seconds": 184,
- "tolerancia": 0.000001,
- "ultimas_velas": [{"close": 1.107005}]
+ "tolerancia": 1e-06,
+ "ultimas_velas": [
+  {
+   "close": 1.107005
+  }
+ ],
+ "tempo_compra_s": 34,
+ "tempo_vela_s": 300,
+ "expiracao": "17:53"
 }

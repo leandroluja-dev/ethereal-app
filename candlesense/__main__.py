@@ -1,8 +1,8 @@
-"""CandleSense - linha de comando da Fase 1.
+"""CandleSense - linha de comando.
 
-    candlesense                    lê o gráfico ao vivo (macOS)
+    candlesense                    lê o gráfico ao vivo e mostra o painel (macOS)
     candlesense --debug            idem, com janela de debug desenhando a detecção
-    candlesense debug IMG...       lê capturas salvas e grava a imagem de debug (qualquer sistema)
+    candlesense debug IMG...       lê capturas salvas e grava debug + painel (qualquer sistema)
     candlesense capturar           salva capturas da janela da IQ Option (para testes)
     candlesense permissoes         guia das permissões do macOS
     candlesense janelas            mostra as janelas encontradas
@@ -24,6 +24,7 @@ from pathlib import Path
 import cv2
 
 from .debug.overlay import draw
+from .engine.rules import EngineConfig, RuleEngine
 from .vision.ocr import best_engine
 from .vision.reader import ChartReader
 
@@ -35,10 +36,38 @@ def _reading_json(r) -> dict:
         "avisos": r.warnings,
         "preco_atual": r.current_price,
         "cronometro_s": r.timer_seconds,
+        "tempo_compra_s": r.purchase_seconds,
+        "tempo_vela_s": r.timeframe_s,
+        "expiracao_iq": r.expiry_label,
+        "expiracao_faltam_s": r.expiry_seconds,
         "payout_pct": r.payout_pct,
         "tempos_ms": {k: round(v, 1) for k, v in r.timings_ms.items()},
         "velas": [asdict(c) for c in r.candles],
     }
+
+
+def _decision_json(d) -> dict:
+    return {
+        "decisao": d.action,
+        "motivos": d.reasons,
+        "melhor": None if d.best is None else {
+            "direcao": d.best.direction, "probabilidade": round(d.best.prob, 4), "velas": d.best.candles},
+        "prob_alta_por_expiracao": {str(h.candles): round(h.p_up, 4) for h in d.horizons},
+        "equilibrio": d.breakeven,
+        "minimo_para_sinal": d.threshold,
+        "fase_da_vela": d.phase,
+        "entrar_em_ate_s": d.seconds_to_enter,
+        "alvo": d.target,
+        "saida": d.exit_mode,
+        "expiracao": d.expiry_hint,
+        "modulos": [{"modulo": m.name, "nota": round(m.score, 3), "confianca": round(m.confidence, 3),
+                     "explicacao": m.explanation} for m in d.modules],
+    }
+
+
+def _engine(args) -> RuleEngine:
+    cfg = EngineConfig(margin=args.margem / 100.0)
+    return RuleEngine(cfg)
 
 
 def cmd_debug(args) -> int:
@@ -52,12 +81,20 @@ def cmd_debug(args) -> int:
             print(f"{p}: não consegui abrir a imagem")
             code = 1
             continue
+        from .ui.panel import render
+
         reader = ChartReader(ocr)
         r = reader.read(img)
+        eng = _engine(args)
+        eng.cfg.stable_readings = 1  # imagem solta: não há leitura anterior para confirmar
+        dec = eng.evaluate(r)
         stem = Path(p).stem
         cv2.imwrite(str(out / f"{stem}_debug.png"), draw(img, r))
-        (out / f"{stem}.json").write_text(json.dumps(_reading_json(r), ensure_ascii=False, indent=1, default=float))
+        cv2.imwrite(str(out / f"{stem}_painel.png"), render(dec, r))
+        data = {"leitura": _reading_json(r), "sinal": _decision_json(dec)}
+        (out / f"{stem}.json").write_text(json.dumps(data, ensure_ascii=False, indent=1, default=float))
         print(f"{p}: {r.summary()}")
+        print(f"  -> {dec.summary()}")
     print(f"Imagens de debug em {out.resolve()}")
     return code
 
@@ -110,7 +147,13 @@ def cmd_live(args) -> int:
     src = open_window_source(win)
     print(f"Captura: {src.name}. Ctrl+C para sair.")
     reader = ChartReader(best_engine(args.ocr))
+    engine = _engine(args)
     print(f"OCR: {reader.ocr.name}")
+    panel = None
+    if not args.sem_painel:
+        from .ui.panel import PanelWindow
+
+        panel = PanelWindow(scale=args.painel_escala)
     period = 1.0 / max(0.5, args.fps)
     save_dir = Path(args.salvar_debug) if args.salvar_debug else None
     if save_dir:
@@ -129,15 +172,21 @@ def cmd_live(args) -> int:
                     win = _find_window_or_wait(wait=True)
                     src = open_window_source(win)
                     reader.reset()
+                    engine.reset()
                     fails = 0
                 time.sleep(0.5)
                 continue
             fails = 0
             r = reader.read(img)
             r.timings_ms = {"captura": cap_ms, **r.timings_ms}
+            dec = engine.evaluate(r)
             total = (time.perf_counter() - t0) * 1000
-            line = f"[{time.strftime('%H:%M:%S')}] {r.summary()} | total {total:.0f}ms"
-            print("\r" + line[:200].ljust(200), end="", flush=True)
+            line = f"[{time.strftime('%H:%M:%S')}] {dec.summary()} | {r.summary()} | total {total:.0f}ms"
+            print("\r" + line[:160].ljust(160), end="", flush=True)
+            if panel is not None:
+                panel.show(dec, r)
+                if not (args.debug or save_dir) and cv2.waitKey(1) & 0xFF in (27, ord("q")):
+                    break
             if args.debug or save_dir:
                 ov = draw(img, r)
                 if args.debug:
@@ -148,10 +197,15 @@ def cmd_live(args) -> int:
                     cv2.imshow("CandleSense debug", view)
                     if cv2.waitKey(1) & 0xFF in (27, ord("q")):
                         break
+                elif panel is not None and cv2.waitKey(1) & 0xFF in (27, ord("q")):
+                    break
                 if save_dir and time.monotonic() - last_save >= args.intervalo_debug:
                     stamp = time.strftime("%Y%m%d-%H%M%S")
                     cv2.imwrite(str(save_dir / f"{stamp}_debug.png"), ov)
                     cv2.imwrite(str(save_dir / f"{stamp}_captura.png"), img)
+                    (save_dir / f"{stamp}_sinal.json").write_text(
+                        json.dumps({"leitura": _reading_json(r), "sinal": _decision_json(dec)},
+                                   ensure_ascii=False, indent=1, default=float))
                     last_save = time.monotonic()
             dt = time.perf_counter() - t0
             if dt < period:
@@ -160,6 +214,8 @@ def cmd_live(args) -> int:
         pass
     finally:
         src.close()
+        if panel is not None:
+            panel.close()
         print()
     return 0
 
@@ -218,6 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--intervalo-debug", type=float, default=5.0, help="segundos entre imagens salvas")
     ap.add_argument("--fps", type=float, default=4.0, help="leituras por segundo (padrão 4)")
     ap.add_argument("--ajustar-janela", metavar="LxA", help="ajusta a janela (ex.: 1920x1080) via Acessibilidade")
+    ap.add_argument("--sem-painel", action="store_true", help="não abre o painel (só o terminal)")
+    ap.add_argument("--painel-escala", type=float, default=1.0, help="tamanho do painel (ex.: 1.3)")
+    ap.add_argument("--margem", type=float, default=2.0,
+                    help="pontos percentuais acima do equilíbrio do payout para sinalizar (padrão 2)")
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd")
 

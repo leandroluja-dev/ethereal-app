@@ -205,5 +205,42 @@ def parse_payout(text: str) -> Optional[int]:
     return v if 1 <= v <= 100 else None
 
 
-def is_clock_text(text: str) -> bool:
+def is_clock_text(text: str, allow_seconds: bool = False) -> bool:
+    if allow_seconds:
+        return bool(re.fullmatch(r"\s*\d{1,2}\s*:\s*\d{2}(\s*:\s*\d{2})?\s*", text))
     return bool(re.fullmatch(r"\s*\d{1,2}\s*:\s*\d{2}\s*", text))
+
+
+_CLOCK_RE = re.compile(r"(?<!\d)(\d{1,2})\s*:\s*(\d{2})(?:\s*:\s*(\d{2}))?(?!\d)")
+
+
+def parse_clock(text: str, need_seconds: bool = False) -> Optional[int]:
+    """Hora do dia em segundos: '18:16' -> 65760; 'CURRENT TIME: ..., 18:14:37' -> 65677.
+
+    Usa a última hora que aparece no texto (o relógio da IQ vem depois da data).
+    """
+    found = list(_CLOCK_RE.finditer(text))
+    if not found:
+        return None
+    m = found[-1]
+    hh, mm, ss = int(m.group(1)), int(m.group(2)), m.group(3)
+    if need_seconds and ss is None:
+        return None
+    if hh > 23 or mm > 59 or (ss is not None and int(ss) > 59):
+        return None
+    return hh * 3600 + mm * 60 + (int(ss) if ss else 0)
+
+
+_TF_RE = re.compile(r"^\s*([mMhHdD]?)\s*(\d{1,2})\s*([smhdSMHD]?)\s*$")
+
+
+def parse_timeframe(text: str) -> Optional[int]:
+    """Botão de tempo da vela: '5m' -> 300, '1h' -> 3600, 'M15' -> 900, '30s' -> 30."""
+    m = _TF_RE.match(text)
+    if not m:
+        return None
+    pre, num, suf = m.group(1).lower(), int(m.group(2)), m.group(3).lower()
+    unit = suf or pre
+    if not unit or (pre and suf) or num <= 0:
+        return None
+    return num * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]

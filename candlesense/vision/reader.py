@@ -20,8 +20,8 @@ import numpy as np
 from ..models import Box, Candle, ChartReading, Layout, OcrToken, PriceScale
 from .axis import axis_labels, fit_scale, grid_profile, snap_to_grid
 from .candles import ColorConfig, CandleDetection, detect_candles, measure_forming
-from .layout import build_layout
-from .ocr import OcrEngine, parse_number, parse_payout, parse_timer
+from .layout import build_layout, timeframe_from_axis
+from .ocr import OcrEngine, is_clock_text, parse_clock, parse_number, parse_payout, parse_timer
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ class ReaderConfig:
     payout_max_age_s: float = 5.0
     timer_ocr_every_s: float = 1.0  # entre leituras, o cronômetro é descontado pelo relógio
     max_candle_height_ratio: float = 4.0  # vela atual mais alta que N x a maior recente = suspeita
+    expiry_max_age_s: float = 5.0  # expiração escolhida e relógio da IQ
+    timeframe_max_age_s: float = 15.0  # reler o eixo de horas (a pessoa pode trocar 5m -> 1m)
 
 
 class _OcrCache:
@@ -102,6 +104,20 @@ def _colored_boxes(bgr: np.ndarray, axis: Box) -> list[Box]:
     return out
 
 
+def _clean_digits(crop: np.ndarray) -> np.ndarray:
+    """Números brancos sobre fundo escuro, sem a linha vertical colorida que passa por cima."""
+    if crop.size == 0:
+        return crop
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    mask = ((hsv[..., 1] > 60) & (hsv[..., 2] > 50)).astype(np.uint8) * 255
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    if mask.any():
+        mask = cv2.dilate(mask, np.ones((1, 3), np.uint8))
+        gray = cv2.inpaint(gray, mask, 3, cv2.INPAINT_TELEA)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+
+
 class ChartReader:
     def __init__(self, ocr: OcrEngine, cfg: Optional[ReaderConfig] = None,
                  colors: Optional[ColorConfig] = None) -> None:
@@ -114,6 +130,7 @@ class ChartReader:
         self._timer_cache = _OcrCache()
         self._payout_cache = _OcrCache()
         self._label_cache = _OcrCache()
+        self._new_text_caches()
         self._track: Optional[dict] = None  # memória da vela atual entre quadros
         self.last_tokens: list[OcrToken] = []  # do último OCR de tela inteira (debug)
 
@@ -123,7 +140,14 @@ class ChartReader:
         self._timer_cache = _OcrCache()
         self._payout_cache = _OcrCache()
         self._label_cache = _OcrCache()
+        self._new_text_caches()
         self._track = None
+
+    def _new_text_caches(self) -> None:
+        self._purchase_cache = _OcrCache()
+        self._expiry_cache = _OcrCache()
+        self._clock_cache = _OcrCache()
+        self._tf_cache = _OcrCache()
 
     # ------------------------------------------------------------------ API
 
@@ -195,6 +219,7 @@ class ChartReader:
         self._timer_cache = _OcrCache()
         self._payout_cache = _OcrCache()
         self._label_cache = _OcrCache()
+        self._new_text_caches()
 
     def _read(self, bgr: np.ndarray) -> ChartReading:
         timings: dict[str, float] = {}
@@ -245,6 +270,7 @@ class ChartReader:
             reading.payout_pct = vals[0] if vals else None
         if reading.payout_pct is None:
             reading.warnings.append("payout não lido")
+        self._read_trade_texts(bgr, lay, reading)
         timings["textos"] = (time.perf_counter() - t) * 1000
 
         if len(det.candles) < self.cfg.min_candles:
@@ -317,15 +343,80 @@ class ChartReader:
         c.low = min(t["low"], c.open, c.close)
         c.color = "verde" if c.close >= c.open else "vermelha"
 
-    def _read_timer(self, bgr: np.ndarray, box: Box) -> Optional[int]:
+    def _read_trade_texts(self, bgr: np.ndarray, lay: Layout, reading: ChartReading) -> None:
+        """Prazo de compra, expiração escolhida, relógio da IQ e tempo da vela."""
+        if lay.purchase is not None:
+            reading.purchase_seconds = self._read_timer(bgr, lay.purchase, self._purchase_cache,
+                                                        clean=True)
+        if reading.purchase_seconds is None:
+            reading.warnings.append("tempo de compra não lido")
+
+        # Tempo da vela: relê o eixo de horas de tempos em tempos (troca de 5m para 1m
+        # não muda o passo das velas na tela, então não dispara um novo layout).
+        tf = lay.timeframe_s
+        c = self._tf_cache
+        if lay.time_axis is not None:
+            if time.monotonic() - c.t >= self.cfg.timeframe_max_age_s:
+                toks = [t for t in self.ocr.read(bgr, lay.time_axis) if is_clock_text(t.text, allow_seconds=True)]
+                c.value = timeframe_from_axis(toks, lay.candle_pitch)
+                c.t = time.monotonic()
+            if c.value is not None:
+                tf = c.value
+                lay.timeframe_s = tf
+        if tf is not None and reading.timer_seconds is not None and reading.timer_seconds > tf + 2:
+            tf = None  # cronômetro maior que a vela: o tempo da vela mudou
+            lay.timeframe_s = None
+            self._tf_cache = _OcrCache()
+        reading.timeframe_s = tf
+        if tf is None:
+            reading.warnings.append("tempo da vela não lido")
+
+        if lay.expiry is not None and lay.clock is not None:
+            exp = self._read_clock(bgr, lay.expiry, self._expiry_cache, tick=False)
+            now = self._read_clock(bgr, lay.clock, self._clock_cache, tick=True)
+            if exp is not None:
+                reading.expiry_label = f"{exp // 3600:02d}:{exp % 3600 // 60:02d}"
+                if now is not None:
+                    left = (exp - now) % 86400
+                    reading.expiry_seconds = left if left <= 6 * 3600 else None
+
+    def _read_clock(self, bgr: np.ndarray, box: Box, cache: _OcrCache, tick: bool) -> Optional[int]:
+        """Hora do dia lida a cada poucos segundos; o relógio da IQ anda junto com o nosso."""
+        now = time.monotonic()
+        if cache.value is None or now - cache.t >= self.cfg.expiry_max_age_s:
+            toks = self.ocr.read(bgr, box)
+            vals = [v for v in (parse_clock(x.text) for x in toks) if v is not None]
+            cache.value = vals[-1] if vals else None
+            cache.t = now
+        if cache.value is None:
+            return None
+        return int(cache.value + (now - cache.t if tick else 0)) % 86400
+
+    def _read_timer(self, bgr: np.ndarray, box: Box, cache: Optional[_OcrCache] = None,
+                    clean: bool = False) -> Optional[int]:
         """Lê mm:ss no máximo 1x por segundo; entre leituras desconta o tempo passado."""
         now = time.monotonic()
-        c = self._timer_cache
+        c = cache or self._timer_cache
         last = c.value
         if last is not None and now - c.t < self.cfg.timer_ocr_every_s:
             return max(0, int(round(last - (now - c.t))))
-        toks = self.ocr.read(bgr, box)
+        if clean:
+            crop = _clean_digits(bgr[box.y : box.y2, box.x : box.x2])
+            toks = self.ocr.read(crop, Box(0, 0, crop.shape[1], crop.shape[0]))
+        else:
+            toks = self.ocr.read(bgr, box)
         vals = [v for v in (parse_timer(x.text) for x in toks) if v is not None]
+        if not vals:
+            # Às vezes o OCR parte o número ('00:' + '53'): a linha de compra passa por cima.
+            joined = "".join(x.text.strip() for x in sorted(toks, key=lambda x: x.box.x))
+            v = parse_timer(joined)
+            if v is None:
+                digits = "".join(ch for ch in joined if ch.isdigit())
+                v = parse_timer(f"{digits[:2]}:{digits[2:]}") if len(digits) == 4 else None
+            vals = [v] if v is not None else []
+        if not vals and last is not None and now - c.t < 3.0:
+            # Uma leitura falhou: segue descontando o relógio por mais um pouco.
+            return max(0, int(round(last - (now - c.t))))
         c.value = vals[0] if vals else None
         c.t = now
         return c.value

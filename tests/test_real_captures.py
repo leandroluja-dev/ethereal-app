@@ -23,6 +23,12 @@ def test_real_capture(ocr, path):
         assert r.payout_pct == exp["payout"]
     if "timer_seconds" in exp:
         assert r.timer_seconds is not None and abs(r.timer_seconds - exp["timer_seconds"]) <= 1
+    if "tempo_compra_s" in exp:
+        assert r.purchase_seconds is not None and abs(r.purchase_seconds - exp["tempo_compra_s"]) <= 1
+    if "tempo_vela_s" in exp:
+        assert r.timeframe_s == exp["tempo_vela_s"]
+    if "expiracao" in exp:
+        assert r.expiry_label == exp["expiracao"]
     want = exp.get("ultimas_velas") or []
     if want:
         tol = exp.get("tolerancia", 0.0)
@@ -32,3 +38,18 @@ def test_real_capture(ocr, path):
             for k in ("open", "high", "low", "close"):
                 if k in w:
                     assert abs(getattr(c, k) - w[k]) <= tol, (k, w[k], getattr(c, k))
+
+
+@pytest.mark.skipif(not CASES, reason="nenhuma captura real com gabarito ainda")
+def test_real_capture_signal_is_honest(ocr):
+    """Nas capturas reais o motor dá uma decisão com motivos e probabilidade dentro do teto."""
+    from candlesense.engine.rules import RuleEngine
+    from candlesense.ui.panel import render
+
+    eng = RuleEngine()
+    img = cv2.imread(str(CASES[0]), cv2.IMREAD_COLOR)
+    r = ChartReader(ocr).read(img)
+    d = eng.evaluate(r)
+    assert d.horizons and all(abs(h.p_up - 0.5) <= max(eng.cfg.max_edge) + 1e-9 for h in d.horizons)
+    assert d.signal or d.reasons
+    assert render(d, r).shape[0] > 100
