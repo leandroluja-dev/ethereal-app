@@ -146,6 +146,35 @@ def _check_platform() -> bool:
     return True
 
 
+_diag_t = 0.0
+
+
+def _diagnostic(img, r, dec) -> None:
+    """Modo app: guarda a captura (e o debug) quando a leitura falha, no máximo 1 a cada 30 s.
+
+    Fica em diagnostico/ na pasta do projeto, só as 6 mais recentes, para o
+    ajuste remoto sem pedir print à pessoa.
+    """
+    global _diag_t
+    if r.ok or time.monotonic() - _diag_t < 30:
+        return
+    _diag_t = time.monotonic()
+    try:
+        d = Path("diagnostico")
+        d.mkdir(exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        cv2.imwrite(str(d / f"{stamp}_captura.png"), img)
+        cv2.imwrite(str(d / f"{stamp}_debug.png"), draw(img, r))
+        (d / f"{stamp}.json").write_text(json.dumps(
+            {"leitura": _reading_json(r), "sinal": _decision_json(dec)}, ensure_ascii=False, indent=1, default=float))
+        files = sorted(d.glob("*_captura.png"))
+        for old in files[:-6]:
+            for f in d.glob(old.name.replace("_captura.png", "*")):
+                f.unlink(missing_ok=True)
+    except Exception as e:
+        print(f"diagnóstico não salvo: {e!r}", flush=True)
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import hide_python_dock_icon
@@ -216,6 +245,8 @@ def cmd_live(args) -> int:
                     last_action = dec.action
             else:
                 print("\r" + line[:160].ljust(160), end="", flush=True)
+            if APP_MODE:
+                _diagnostic(img, r, dec)
             if panel is not None:
                 panel.show(dec, r)
                 if not (args.debug or save_dir) and cv2.waitKey(1) & 0xFF in (27, ord("q")):

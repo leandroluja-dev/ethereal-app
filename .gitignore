@@ -13,3 +13,4 @@ Abrir CandleSense.command
 /CandleSense.app/
 candlesense.log*
 .candlesense.pid
+diagnostico/
