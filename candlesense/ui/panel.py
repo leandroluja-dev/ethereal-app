@@ -121,6 +121,41 @@ class _Canvas:
         return np.asarray(img)[:, :, ::-1].copy()  # RGB -> BGR (OpenCV)
 
 
+def _gauge(c: "_Canvas", d: Decision) -> None:
+    import math
+
+    st = d.strength or 0.0
+    r = 70
+    cx, cy = PAD + r + 6, c.y / c.s + r + 6  # em unidades do painel
+    box = [c.px(cx - r), c.px(cy - r), c.px(cx + r), c.px(cy + r)]
+    # Cinco faixas de 180° a 0° (esquerda = venda, direita = compra)
+    segs = [(180, 144, RED), (144, 112, (150, 70, 64)), (112, 68, GREY), (68, 36, (60, 130, 90)), (36, 0, GREEN)]
+    for a0, a1, col in segs:
+        # PIL mede o ângulo no sentido horário a partir das 3h: 180..360 é a metade de cima
+        c.d.arc(box, start=360 - a0, end=360 - a1, fill=col, width=max(2, c.px(12)))
+    ang = math.radians(90 - 90 * st)  # st=-1 -> 180°, st=+1 -> 0°
+    nx, ny = cx + (r - 18) * math.cos(ang), cy - (r - 18) * math.sin(ang)
+    c.d.line([(c.px(cx), c.px(cy)), (c.px(nx), c.px(ny))], fill=FG, width=max(2, c.px(4)))
+    c.d.ellipse([c.px(cx - 6), c.px(cy - 6), c.px(cx + 6), c.px(cy + 6)], fill=FG)
+    # Texto à direita do medidor
+    tx = cx + r + 22
+    y0 = c.y
+    label = d.strength_label
+    col = GREEN if st > 0.2 else RED if st < -0.2 else FG
+    c.y = y0 + c.px(8)
+    c.text(tx, "Força agora", 13, DIM)
+    c.y = y0 + c.px(26)
+    c.text(tx, label, 24, col, bold=True)
+    c.y = y0 + c.px(60)
+    lado = "alta" if d.best.p_up >= 0.5 else "baixa"
+    c.text(tx, f"{_pct(d.best.prob)} de {lado} em {d.expiry_text()}", 14, FG)
+    c.y = y0 + c.px(80)
+    if d.threshold is not None:
+        c.text(tx, f"forte a partir de {_pct(d.threshold)}", 12, DIM)
+    c.y = y0 + c.px(r + 22)
+    c.rule()
+
+
 def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0) -> np.ndarray:
     """Imagem BGR do painel."""
     c = _Canvas(scale)
@@ -141,10 +176,14 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
         c.text(PAD, f"mais provável: {lado} {_pct(d.best.prob)} em {d.expiry_text()}", 16, (255, 255, 255), dy=48)
     c.y = c.px(hh + 10)
 
+    # Medidor de força (venda forte ... compra forte)
+    if d.strength is not None:
+        _gauge(c, d)
+
     # Tempo para entrar e fase da vela
     if d.action != INCERTA:
         left = "—" if d.seconds_to_enter is None else _mmss(d.seconds_to_enter)
-        c.text(PAD, "Entrar em até", 13, DIM)
+        c.text(PAD, "Clique em até", 13, DIM)
         c.text(PAD + 150, "Fase da vela", 13, DIM)
         c.text(PAD + 290, "Mínimo p/ sinal", 13, DIM)
         c.space(17)

@@ -28,6 +28,7 @@ NAO_ENTRAR = "NÃO ENTRAR"
 INCERTA = "LEITURA INCERTA"
 
 HORIZONS = (1, 2, 3, 5)
+MAX_EDGE_REF = (0.10, 0.09, 0.08, 0.07)  # teto padrão (medidor de força)
 
 # Peso de cada módulo por expiração (1, 2, 3 e 5 velas). A vela atual pesa
 # muito no curtíssimo prazo e quase nada em 5 velas; a tendência, o contrário.
@@ -47,11 +48,12 @@ class EngineConfig:
     weights: dict[str, tuple[float, ...]] = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
     # Maior distância de 50% que as regras podem afirmar, por expiração.
     # Sem calibração, 60% é o máximo que o motor se permite dizer.
-    max_edge: tuple[float, ...] = (0.10, 0.09, 0.08, 0.07)
+    max_edge: tuple[float, ...] = MAX_EDGE_REF
     margin: float = 0.02  # acima do equilíbrio do payout
     # O começo da vela é o momento preferido; depois, exige mais.
     phase_margin: dict[str, float] = field(default_factory=lambda: {"início": 0.0, "meio": 0.01, "fim": 0.02})
     min_seconds_to_enter: int = 5
+    reaction_s: int = 3  # tempo que a pessoa leva para clicar depois do aviso
     min_agree: int = 3  # módulos com opinião na mesma direção
     agree_threshold: float = 0.15  # |nota x confiança| para contar como opinião
     max_strong_against: int = 1
@@ -95,6 +97,33 @@ class Decision:
     @property
     def signal(self) -> bool:
         return self.action in (COMPRA, VENDA)
+
+    @property
+    def strength(self) -> Optional[float]:
+        """Força de -1 (venda forte) a +1 (compra forte) na expiração sugerida."""
+        if self.best is None or self.action == INCERTA:
+            return None
+        i = [h.candles for h in self.horizons].index(self.best.candles) if self.horizons else 0
+        cap = 0.10
+        try:
+            cap = MAX_EDGE_REF[i]
+        except IndexError:
+            pass
+        return max(-1.0, min(1.0, (self.best.p_up - 0.5) / cap))
+
+    @property
+    def strength_label(self) -> str:
+        """Venda forte / Venda / Neutro / Compra / Compra forte."""
+        st = self.strength
+        if st is None:
+            return "—"
+        side = "Compra" if st > 0 else "Venda"
+        if self.signal or (self.threshold is not None and self.best is not None
+                           and self.best.prob >= self.threshold):
+            return f"{side} forte"
+        if abs(st) < 0.2:
+            return "Neutro"
+        return side
 
     def expiry_text(self, h: Optional[HorizonProb] = None) -> str:
         h = h or self.best
@@ -197,7 +226,9 @@ class RuleEngine:
         best = max(hs, key=lambda h: (h.prob, -h.candles))
         phase = candle_phase(ctx.elapsed_frac)
         d = Decision(NAO_ENTRAR, horizons=hs, best=best, modules=mods, phase=phase,
-                     seconds_to_enter=r.purchase_seconds, timeframe_s=r.timeframe_s, decimals=ctx.decimals)
+                     seconds_to_enter=(None if r.purchase_seconds is None
+                                       else max(0, r.purchase_seconds - cfg.reaction_s)),
+                     timeframe_s=r.timeframe_s, decimals=ctx.decimals)
 
         sign = 1 if best.p_up >= 0.5 else -1
         d.agree = sum(1 for m in mods if m.weighted * sign >= cfg.agree_threshold)
@@ -217,8 +248,8 @@ class RuleEngine:
                 reasons.append(f"probabilidade {pct(best.prob)} abaixo do mínimo {pct(d.threshold)}")
         if r.purchase_seconds is None:
             reasons.append("tempo de compra não lido")
-        elif r.purchase_seconds < cfg.min_seconds_to_enter:
-            reasons.append("tempo de compra acabando")
+        elif r.purchase_seconds < cfg.min_seconds_to_enter + cfg.reaction_s:
+            reasons.append(f"tempo de compra acabando (seu tempo de reação: {cfg.reaction_s} s)")
         if n_closed < cfg.min_closed_candles:
             reasons.append(f"poucas velas na tela ({n_closed})")
         if d.agree < cfg.min_agree:

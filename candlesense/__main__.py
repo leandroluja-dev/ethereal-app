@@ -66,7 +66,7 @@ def _decision_json(d) -> dict:
 
 
 def _engine(args) -> RuleEngine:
-    cfg = EngineConfig(margin=args.margem / 100.0)
+    cfg = EngineConfig(margin=args.margem / 100.0, reaction_s=int(args.atraso))
     return RuleEngine(cfg)
 
 
@@ -215,6 +215,7 @@ def cmd_live(args) -> int:
     last_save = 0.0
     last_action = None
     last_log = 0.0
+    prev_signal = None
     fails = 0
     try:
         while True:
@@ -236,6 +237,11 @@ def cmd_live(args) -> int:
             r = reader.read(img)
             r.timings_ms = {"captura": cap_ms, **r.timings_ms}
             dec = engine.evaluate(r)
+            if dec.signal and dec.action != prev_signal and not args.sem_som:
+                from .alerts import play
+
+                play("entrar", voice=("compra" if dec.action == "COMPRA" else "venda") + ", " + dec.expiry_text())
+            prev_signal = dec.action if dec.signal else None
             total = (time.perf_counter() - t0) * 1000
             line = f"[{time.strftime('%H:%M:%S')}] {dec.summary()} | {r.summary()} | total {total:.0f}ms"
             if APP_MODE:
@@ -344,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ajustar-janela", metavar="LxA", help="ajusta a janela (ex.: 1920x1080) via Acessibilidade")
     ap.add_argument("--sem-painel", action="store_true", help="não abre o painel (só o terminal)")
     ap.add_argument("--painel-escala", type=float, default=1.0, help="tamanho do painel (ex.: 1.3)")
+    ap.add_argument("--atraso", type=float, default=3.0,
+                    help="seu tempo de reação em segundos (padrão 3): o aviso vem com essa folga")
+    ap.add_argument("--sem-som", action="store_true", help="sem avisos sonoros")
     ap.add_argument("--margem", type=float, default=2.0,
                     help="pontos percentuais acima do equilíbrio do payout para sinalizar (padrão 2)")
     ap.add_argument("--app", action="store_true", help=argparse.SUPPRESS)  # aberto pelo CandleSense.app
