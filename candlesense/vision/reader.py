@@ -114,6 +114,7 @@ class ChartReader:
         self._timer_cache = _OcrCache()
         self._payout_cache = _OcrCache()
         self._label_cache = _OcrCache()
+        self._track: Optional[dict] = None  # memória da vela atual entre quadros
         self.last_tokens: list[OcrToken] = []  # do último OCR de tela inteira (debug)
 
     def reset(self) -> None:
@@ -122,6 +123,7 @@ class ChartReader:
         self._timer_cache = _OcrCache()
         self._payout_cache = _OcrCache()
         self._label_cache = _OcrCache()
+        self._track = None
 
     # ------------------------------------------------------------------ API
 
@@ -269,6 +271,8 @@ class ChartReader:
             reading.current_price = reading.candles[-1].close if reading.candles else None
             if label is not None and reading.candles:
                 self._apply_price_label(reading, scale, label, bgr, det)
+                if reading.ok:
+                    self._track_forming(reading)
             elif det.candles and not det.candles[-1].body_certain:
                 reading.ok = False
                 reading.reasons.append("corpo da vela atual encoberto e etiqueta do preço não lida")
@@ -283,6 +287,35 @@ class ChartReader:
                 reading.ok = False
                 reading.reasons.append("corpo de uma vela recente não pôde ser medido")
         return reading
+
+    def _track_forming(self, reading: ChartReading) -> None:
+        """Junta os quadros da mesma vela: máxima só sobe, mínima só desce, abertura estável.
+
+        Uma vela nova é reconhecida quando o cronômetro volta para cima ou a vela
+        atual muda de lugar (o gráfico andou).
+        """
+        c = reading.candles[-1]
+        pitch = self.layout.candle_pitch if self.layout else 0.0
+        t = self._track
+        new = (
+            t is None
+            or abs(c.x_center - t["x"]) > 0.5 * pitch
+            or (reading.timer_seconds is not None and t["timer"] is not None
+                and reading.timer_seconds > t["timer"] + 5)
+        )
+        if new:
+            self._track = {"x": c.x_center, "timer": reading.timer_seconds,
+                           "opens": [c.open], "high": c.high, "low": c.low}
+            return
+        t["x"] = c.x_center
+        t["timer"] = reading.timer_seconds
+        t["opens"] = (t["opens"] + [c.open])[-15:]
+        t["high"] = max(t["high"], c.high, c.close)
+        t["low"] = min(t["low"], c.low, c.close)
+        c.open = float(np.median(t["opens"]))
+        c.high = max(t["high"], c.open, c.close)
+        c.low = min(t["low"], c.open, c.close)
+        c.color = "verde" if c.close >= c.open else "vermelha"
 
     def _read_timer(self, bgr: np.ndarray, box: Box) -> Optional[int]:
         """Lê mm:ss no máximo 1x por segundo; entre leituras desconta o tempo passado."""

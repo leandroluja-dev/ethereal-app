@@ -452,13 +452,19 @@ def measure_forming(bgr: np.ndarray, x_center: float, body_w: int, label_y: floa
         if not any(cover[max(0, ly - 3): ly + 4] > 0):
             return None
         r0 = r1 = ly
-    # pavio: segue para cima e para baixo enquanto houver pixels (tolera falhas de 3 px)
+    # pavio: fino e no centro da vela. Linha com muita cor espalhada é uma média
+    # móvel cruzando a coluna, não pavio.
+    wcols = ok.shape[1]
+    c0 = max(0, wcols // 2 - max(2, wcols // 8))
+    c1 = min(wcols, wcols // 2 + max(2, wcols // 8) + 1)
+    wick = ok[:, c0:c1].any(axis=1) & (cover <= max(c1 - c0 + 2, int(0.35 * wcols)))
+
     def walk(r: int, step: int) -> int:
         gap = 0
         last = r
         while 0 <= r + step < len(cover):
             r += step
-            if cover[r] > 0:
+            if wick[r]:
                 last, gap = r, 0
             else:
                 gap += 1
