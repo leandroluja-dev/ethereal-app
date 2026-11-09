@@ -231,6 +231,13 @@ class PanelWindow:
     def show(self, decision: Decision, reading: Optional[ChartReading] = None) -> None:
         self.cv2.imshow(self.NAME, render(decision, reading, self.scale))
 
+    def is_open(self) -> bool:
+        try:
+            # -1 = a janela não existe mais (fechada pela bolinha vermelha).
+            return self.cv2.getWindowProperty(self.NAME, self.cv2.WND_PROP_AUTOSIZE) >= 0
+        except Exception:
+            return True
+
     def close(self) -> None:
         try:
             self.cv2.destroyWindow(self.NAME)

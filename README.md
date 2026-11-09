@@ -120,8 +120,12 @@ pip install -e '.[dev]'
 
 ## Uso
 
-No Mac, dê dois cliques em **Abrir CandleSense.command** na pasta do projeto: ele
-atualiza o código e abre o painel. (O arquivo é uma cópia de `tools/abrir_candlesense.command`.)
+No Mac, use o **CandleSense.app** (ícone de velas, na pasta do projeto; pode ficar
+no Dock). Ele abre só o painel, sem Terminal, atualiza o código sozinho (`git pull`
+e dependências quando mudarem), não abre duas vezes e grava o log em
+`candlesense.log`. Na primeira vez o macOS pede a Gravação de Tela para o
+"CandleSense". O modelo do app fica em `tools/macos/CandleSense.app` e o app da
+pasta se atualiza a partir dele.
 
 ```bash
 candlesense permissoes          # guia de Gravação de Tela (e --acessibilidade, opcional)

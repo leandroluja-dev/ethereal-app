@@ -1,0 +1,50 @@
+#!/bin/bash
+# CandleSense.app: abre o painel sem Terminal.
+# - atualiza o código (git pull) e as dependências quando mudarem;
+# - não abre duas vezes;
+# - o log fica em candlesense.log, na pasta do projeto.
+APP="$(cd "$(dirname "$0")/../.." && pwd)"
+DIR="$(dirname "$APP")"
+[ -f "$DIR/pyproject.toml" ] || DIR="$HOME/ethereal-app"
+cd "$DIR" || exit 1
+LOG="$DIR/candlesense.log"
+PIDF="$DIR/.candlesense.pid"
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Library/Frameworks/Python.framework/Versions/Current/bin:$PATH"
+
+avisar() { osascript -e "display notification \"$1\" with title \"CandleSense\"" >/dev/null 2>&1; }
+
+if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then
+  avisar "O CandleSense já está aberto."
+  exit 0
+fi
+
+# Log curto: guarda só o fim do anterior.
+[ -f "$LOG" ] && tail -n 400 "$LOG" > "$LOG.old" 2>/dev/null
+echo "== $(date '+%Y-%m-%d %H:%M:%S') abrindo ==" > "$LOG"
+
+git pull --ff-only -q >>"$LOG" 2>&1 || echo "(sem atualização agora)" >>"$LOG"
+HASH="$(shasum pyproject.toml | cut -d' ' -f1)"
+if [ "$HASH" != "$(cat .venv/.candlesense_deps 2>/dev/null)" ]; then
+  avisar "Atualizando o CandleSense..."
+  .venv/bin/pip install -q -e . >>"$LOG" 2>&1 && echo "$HASH" > .venv/.candlesense_deps
+fi
+
+# Se a cópia do app no repositório mudou, a próxima abertura já usa a nova.
+if [ -d "$DIR/tools/macos/CandleSense.app" ] && ! diff -rq "$DIR/tools/macos/CandleSense.app" "$APP" >/dev/null 2>&1; then
+  SRC="$DIR/tools/macos/CandleSense.app/Contents"
+  cp "$SRC/Info.plist" "$APP/Contents/Info.plist" 2>>"$LOG"
+  cp "$SRC/Resources/CandleSense.icns" "$APP/Contents/Resources/CandleSense.icns" 2>>"$LOG"
+  # Este script está rodando: troca por rename, nunca reescrevendo o arquivo aberto.
+  cp "$SRC/MacOS/CandleSense" "$APP/Contents/MacOS/.CandleSense.new" 2>>"$LOG" \
+    && chmod +x "$APP/Contents/MacOS/.CandleSense.new" \
+    && mv -f "$APP/Contents/MacOS/.CandleSense.new" "$APP/Contents/MacOS/CandleSense" 2>>"$LOG"
+fi
+
+echo $$ > "$PIDF"
+.venv/bin/python -m candlesense --app >>"$LOG" 2>&1
+CODE=$?
+rm -f "$PIDF"
+if [ $CODE -ne 0 ] && [ $CODE -ne 2 ] && [ $CODE -ne 130 ]; then
+  osascript -e 'display dialog "O CandleSense fechou com um erro. Os detalhes estão em candlesense.log, na pasta ethereal-app." with title "CandleSense" buttons {"OK"} default button "OK"' >/dev/null 2>&1
+fi
+exit 0

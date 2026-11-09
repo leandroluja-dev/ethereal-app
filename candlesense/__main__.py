@@ -99,6 +99,9 @@ def cmd_debug(args) -> int:
     return code
 
 
+APP_MODE = False
+
+
 def _find_window_or_wait(wait: bool):
     from .platform.windows import find_iq_window
 
@@ -112,6 +115,10 @@ def _find_window_or_wait(wait: bool):
             return None
         if not shown:
             print("Procurando a janela da IQ Option... abra o app ou a aba da IQ Option no navegador.")
+            if APP_MODE:
+                from .platform.appmode import notify
+
+                notify("Abra a IQ Option: o painel aparece assim que o gráfico estiver na tela.")
             shown = True
         time.sleep(1.0)
 
@@ -123,6 +130,16 @@ def _check_platform() -> bool:
     from .platform import permissions
 
     if not permissions.screen_recording_granted():
+        if APP_MODE:
+            from .platform.appmode import dialog
+
+            permissions.request_screen_recording()
+            permissions.open_settings(permissions.SETTINGS_SCREEN)
+            dialog("O CandleSense precisa da permissão de Gravação de Tela para ler o gráfico.\n\n"
+                   "1. Nos Ajustes que acabaram de abrir, ative a chave do CandleSense.\n"
+                   "2. Depois clique de novo no ícone do CandleSense no Dock.\n\n"
+                   "Ele só lê a tela: nunca clica e nunca opera.")
+            return False
         st = permissions.guide()
         if not st.screen_recording:
             return False
@@ -130,6 +147,10 @@ def _check_platform() -> bool:
 
 
 def cmd_live(args) -> int:
+    if APP_MODE:
+        from .platform.appmode import hide_python_dock_icon
+
+        hide_python_dock_icon()
     if not _check_platform():
         return 2
     from .platform.capture import open_window_source, timed_grab
@@ -154,11 +175,16 @@ def cmd_live(args) -> int:
         from .ui.panel import PanelWindow
 
         panel = PanelWindow(scale=args.painel_escala)
+        if APP_MODE:
+            from .platform.appmode import hide_python_dock_icon
+
+            hide_python_dock_icon()
     period = 1.0 / max(0.5, args.fps)
     save_dir = Path(args.salvar_debug) if args.salvar_debug else None
     if save_dir:
         save_dir.mkdir(parents=True, exist_ok=True)
     last_save = 0.0
+    last_action = None
     fails = 0
     try:
         while True:
@@ -182,11 +208,18 @@ def cmd_live(args) -> int:
             dec = engine.evaluate(r)
             total = (time.perf_counter() - t0) * 1000
             line = f"[{time.strftime('%H:%M:%S')}] {dec.summary()} | {r.summary()} | total {total:.0f}ms"
-            print("\r" + line[:160].ljust(160), end="", flush=True)
+            if APP_MODE:
+                if dec.action != last_action:  # no log, só quando a decisão muda
+                    print(line[:300], flush=True)
+                    last_action = dec.action
+            else:
+                print("\r" + line[:160].ljust(160), end="", flush=True)
             if panel is not None:
                 panel.show(dec, r)
                 if not (args.debug or save_dir) and cv2.waitKey(1) & 0xFF in (27, ord("q")):
                     break
+                if not panel.is_open():
+                    break  # fechou pela bolinha vermelha
             if args.debug or save_dir:
                 ov = draw(img, r)
                 if args.debug:
@@ -278,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--painel-escala", type=float, default=1.0, help="tamanho do painel (ex.: 1.3)")
     ap.add_argument("--margem", type=float, default=2.0,
                     help="pontos percentuais acima do equilíbrio do payout para sinalizar (padrão 2)")
+    ap.add_argument("--app", action="store_true", help=argparse.SUPPRESS)  # aberto pelo CandleSense.app
     ap.add_argument("-v", "--verbose", action="store_true")
     sub = ap.add_subparsers(dest="cmd")
 
@@ -302,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+    global APP_MODE
+    APP_MODE = bool(args.app)
     func = getattr(args, "func", cmd_live)
     return func(args)
 
