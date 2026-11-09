@@ -343,7 +343,9 @@ class ChartReader:
             # Só aceita "doji encoberto" se a etiqueta cair onde o corpo deveria estar
             # (a linha mais larga que sobrou). Fora disso é chute: leitura incerta.
             y = scale.y_of(price)
-            if pc.body_top_y - 2 <= y <= pc.body_bottom_y + 3:
+            wick_only = pc.body_right - pc.body_left <= 1  # sobrou só o pavio: corpo pode estar em qualquer ponto
+            lo, hi = (pc.high_y, pc.low_y) if wick_only else (pc.body_top_y, pc.body_bottom_y)
+            if lo - 2 <= y <= hi + 3:
                 last.open = last.close = price
                 last.high = max(last.high, price)
                 last.low = min(last.low, price)
