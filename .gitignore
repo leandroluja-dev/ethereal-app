@@ -7,3 +7,6 @@ dist/
 .pytest_cache/
 debug_out/
 captures/
+
+# atalho local (cópia de tools/abrir_candlesense.command)
+Abrir CandleSense.command

@@ -120,6 +120,9 @@ pip install -e '.[dev]'
 
 ## Uso
 
+No Mac, dê dois cliques em **Abrir CandleSense.command** na pasta do projeto: ele
+atualiza o código e abre o painel. (O arquivo é uma cópia de `tools/abrir_candlesense.command`.)
+
 ```bash
 candlesense permissoes          # guia de Gravação de Tela (e --acessibilidade, opcional)
 candlesense janelas             # mostra se achou a janela da IQ Option
