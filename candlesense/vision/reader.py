@@ -283,7 +283,7 @@ class ChartReader:
             reading.reasons.append(f"rótulos do eixo inconsistentes ({scale.residual_px:.1f}px)")
         return scale
 
-    def _current_price_label(self, bgr: np.ndarray, lay: Layout) -> Optional[tuple[float, float]]:
+    def _current_price_label(self, bgr: np.ndarray, lay: Layout) -> Optional[tuple[float, float, int]]:
         """Etiqueta colorida do preço atual no eixo: (y do centro, preço)."""
         assert lay.axis is not None
         for box in _colored_boxes(bgr, lay.axis)[:2]:
@@ -291,15 +291,18 @@ class ChartReader:
             for tk in toks:
                 p = parse_number(tk.text)
                 if p is not None:
-                    return (box.cy, p[0])
+                    return (box.cy, p[0], p[1])
         return None
 
     def _apply_price_label(self, reading: ChartReading, scale: PriceScale,
-                           label: tuple[float, float]) -> None:
+                           label: tuple[float, float, int]) -> None:
         """Confere a vela atual com a etiqueta do preço e usa o valor exato dela."""
         last = reading.candles[-1]
         pc = reading.pixel_candles[-1]
         price = label[1]
+        dec = label[2]
+        if dec > scale.decimals:
+            scale.decimals = dec  # a etiqueta tem mais casas que a grade (ex.: 1.107005)
         if not pc.body_certain:
             # Corpo encoberto pela linha do preço: o corpo está na etiqueta.
             y = scale.y_of(price)

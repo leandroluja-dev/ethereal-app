@@ -16,8 +16,8 @@ def axis_labels(tokens: list[OcrToken]) -> list[tuple[float, float, int]]:
     out = []
     for t in tokens:
         p = parse_number(t.text)
-        if p is None:
-            continue
+        if p is None or p[1] == 0:
+            continue  # preço sempre tem casas decimais; inteiros são de indicadores (RSI 70, 30...)
         out.append((t.box.cy, p[0], p[1]))
     return out
 

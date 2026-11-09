@@ -57,8 +57,9 @@ def find_axis(tokens: list[OcrToken], det: CandleDetection, img_w: int, img_h: i
     # A área do gráfico não muda quando a escala muda, só os números.
     cys = sorted(t.box.cy for t in sel)
     spacing = float(np.median(np.diff(cys))) if len(cys) >= 2 else 20.0
-    y1 = int(max(0, min(t.box.y for t in sel) - spacing))
-    y2 = int(min(img_h, max(t.box.y2 for t in sel) + spacing))
+    # Meio espaçamento: não pode invadir painéis de indicador logo abaixo (RSI etc.).
+    y1 = int(max(0, min(t.box.y for t in sel) - 0.5 * spacing))
+    y2 = int(min(img_h, max(t.box.y2 for t in sel) + 0.5 * spacing))
     x1 = max(0, x1 - pad)
     x2 = min(img_w, x2 + 3 * pad)
     return Box(x1, y1, x2 - x1, y2 - y1)

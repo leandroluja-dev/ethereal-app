@@ -1,0 +1,8 @@
+{
+ "_nota": "Print real do app desktop da IQ Option (MacBook Pro Retina 1792x1120 @2x), EUR/USD OTC, velas de 5 min, médias móveis e RSI. Avatar e saldo borrados.",
+ "expect_ok": true,
+ "payout": 86,
+ "timer_seconds": 184,
+ "tolerancia": 0.000001,
+ "ultimas_velas": [{"close": 1.107005}]
+}
