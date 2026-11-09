@@ -68,28 +68,38 @@ class _Blob:
 
 
 def color_masks(bgr: np.ndarray, cfg: ColorConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Máscaras (0/255) dos pixels verdes e vermelhos saturados, e a imagem em HSV."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    sat = (s >= cfg.min_s) & (v >= cfg.min_v)
-    green = sat & (h >= cfg.green_h[0]) & (h <= cfg.green_h[1])
-    red = sat & ((h <= cfg.red_h_low) | (h >= cfg.red_h_high))
-    return green.astype(np.uint8), red.astype(np.uint8), hsv
+    s, v = cfg.min_s, cfg.min_v
+    green = cv2.inRange(hsv, (cfg.green_h[0], s, v), (cfg.green_h[1], 255, 255))
+    red = cv2.bitwise_or(
+        cv2.inRange(hsv, (0, s, v), (cfg.red_h_low, 255, 255)),
+        cv2.inRange(hsv, (cfg.red_h_high, s, v), (180, 255, 255)),
+    )
+    return green, red, hsv
 
 
 def _remove_long_lines(mask: np.ndarray, min_len: int) -> np.ndarray:
     """Tira linhas horizontais longas e finas (linha de preço, botões largos)."""
     if min_len < 3:
         return mask
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (min_len, 1))
-    lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    if not lines.any():
+    # Só as linhas da imagem com pixels suficientes podem conter uma linha longa.
+    rows = np.nonzero(cv2.reduce(mask, 1, cv2.REDUCE_SUM, dtype=cv2.CV_32S).ravel() >= 255 * min_len)[0]
+    if rows.size == 0:
         return mask
     out = mask.copy()
-    out[lines > 0] = 0
-    # Reconecta corpos e pavios que a remoção possa ter cortado.
-    vk = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
-    closed = cv2.morphologyEx(out, cv2.MORPH_CLOSE, vk)
-    return np.where(mask > 0, closed, 0).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (min_len, 1))
+    groups = np.split(rows, np.nonzero(np.diff(rows) > 1)[0] + 1)
+    for g in groups:
+        y1, y2 = max(0, int(g[0]) - 3), min(mask.shape[0], int(g[-1]) + 4)
+        band = mask[y1:y2]
+        lines = cv2.morphologyEx(band, cv2.MORPH_OPEN, kernel)
+        if not lines.any():
+            continue
+        cut = band.copy()
+        cut[lines > 0] = 0
+        out[y1:y2] = cut
+    return out  # cortes deixados aqui são fechados em _fill_occlusions
 
 
 def _fill_occlusions(mask: np.ndarray) -> np.ndarray:
@@ -246,11 +256,13 @@ def _extend(main: list[int], blobs: list[_Blob], widths: list[int], max_w: int,
     main = list(main)
     used = set(main)
     dashed = _dashed_columns(blobs, widths)
+    # Linha vertical contínua (hora da compra/expiração) é bem mais alta que qualquer vela.
+    max_h = 1.3 * max(blobs[i].h for i in main)
 
     def find_at(x: float, ref: _Blob) -> int | None:
         best: tuple[float, int] | None = None
         for i, b in enumerate(blobs):
-            if i in used or i in dashed or widths[i] > max_w:
+            if i in used or i in dashed or widths[i] > max_w or b.h > max_h:
                 continue
             if max(b.y - (ref.y + ref.h), ref.y - (b.y + b.h), 0) > max_vgap:
                 continue
@@ -383,7 +395,7 @@ def detect_candles(
 
     # Cor típica (para o modo debug e futuros ajustes automáticos).
     for color, mask in (("verde", green), ("vermelha", red)):
-        sel = hsv[mask > 0][::16]
+        sel = hsv[::4, ::4][mask[::4, ::4] > 0]
         if sel.size:
             med = tuple(int(v) for v in np.median(sel, axis=0))
             if color == "verde":

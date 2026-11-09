@@ -27,6 +27,7 @@ SCENES = {
     "cripto_2casas": (Scene(seed=7, start_price=64250.0, tick=10.0, vol=12.0, decimals=2,
                             payout=82, timer_text="01:05"), True),
     "doji_atual": (Scene(seed=9, doji_every=5), True),
+    "linha_compra_colada": (Scene(seed=15, deadline_at=1.0), True),
     "velas_finas": (Scene(seed=11, n_candles=300, pitch=4, body_w=2), False),
 }
 

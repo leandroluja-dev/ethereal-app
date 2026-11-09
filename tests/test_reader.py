@@ -8,7 +8,7 @@ import pytest
 from candlesense.vision.reader import ChartReader
 from tests.conftest import load_fixture
 
-ALL = ["app_1080", "navegador_1080", "retina_2x", "cripto_2casas", "doji_atual", "velas_finas", "sem_grafico"]
+ALL = ["app_1080", "navegador_1080", "retina_2x", "cripto_2casas", "doji_atual", "linha_compra_colada", "velas_finas", "sem_grafico"]
 
 
 @pytest.fixture(scope="module")

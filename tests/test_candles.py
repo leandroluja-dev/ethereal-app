@@ -5,7 +5,7 @@ import pytest
 from candlesense.vision.candles import detect_candles
 from tests.conftest import load_fixture
 
-OK_FIXTURES = ["app_1080", "navegador_1080", "retina_2x", "cripto_2casas", "doji_atual"]
+OK_FIXTURES = ["app_1080", "navegador_1080", "retina_2x", "cripto_2casas", "doji_atual", "linha_compra_colada"]
 
 
 @pytest.mark.parametrize("name", OK_FIXTURES)

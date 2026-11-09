@@ -64,6 +64,7 @@ class Scene:
     candle_minutes: int = 1
     doji_every: int = 0  # força doji a cada N velas (0 = nunca)
     noise: int = 0  # ruído de pixel (+-), para testes de robustez
+    deadline_at: float = 0.0  # linha vermelha contínua a N passos da vela atual (0 = tracejada longe)
     truth: dict = field(default_factory=dict)
 
 
@@ -197,9 +198,13 @@ def render(sc: Scene) -> tuple[np.ndarray, dict]:
     d.text((plot_x2 + 10 * s, ly), f"{lc:.{sc.decimals}f}", font=f_small, fill=WHITE, anchor="lm")
 
     # linha vertical tracejada vermelha (fim das compras): fina, não é vela
-    vx = x_last + 60 * s
-    for y in range(plot_y1, plot_y2, 12 * s):
-        d.line([vx, y, vx, y + 6 * s], fill=RED, width=max(1, s))
+    if sc.deadline_at:
+        vx = int(x_last + sc.deadline_at * pitch)
+        d.rectangle([vx, plot_y1, vx + 2 * s - 1, plot_y2], fill=RED)
+    else:
+        vx = x_last + 60 * s
+        for y in range(plot_y1, plot_y2, 12 * s):
+            d.line([vx, y, vx, y + 6 * s], fill=RED, width=max(1, s))
     # cronômetro perto da vela atual
     d.text((x_last + 24 * s, ly - 34 * s), sc.timer_text, font=f_mid, fill=WHITE)
 

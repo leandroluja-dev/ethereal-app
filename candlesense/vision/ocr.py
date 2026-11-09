@@ -78,14 +78,23 @@ class VisionOcrEngine:
 
     name = "vision"
 
-    def __init__(self, accurate: bool = True) -> None:
+    def __init__(self, fast_for_crops: bool = True) -> None:
         import Quartz  # noqa: F401
         import Vision
 
         self._Vision = Vision
-        self._accurate = accurate
+        self._fast_for_crops = fast_for_crops
 
     def read(self, bgr: np.ndarray, roi: Optional[Box] = None) -> list[OcrToken]:
+        # Recortes pequenos (cronômetro, etiqueta do preço) no modo rápido;
+        # se não sair nenhum dígito, tenta o modo preciso.
+        if roi is not None and self._fast_for_crops:
+            toks = self._read(bgr, roi, accurate=False)
+            if any(ch.isdigit() for t in toks for ch in t.text):
+                return toks
+        return self._read(bgr, roi, accurate=True)
+
+    def _read(self, bgr: np.ndarray, roi: Optional[Box], accurate: bool) -> list[OcrToken]:
         import Quartz
 
         Vision = self._Vision
@@ -107,7 +116,7 @@ class VisionOcrEngine:
         )
         req = Vision.VNRecognizeTextRequest.alloc().init()
         req.setRecognitionLevel_(
-            Vision.VNRequestTextRecognitionLevelAccurate if self._accurate
+            Vision.VNRequestTextRecognitionLevelAccurate if accurate
             else Vision.VNRequestTextRecognitionLevelFast
         )
         req.setUsesLanguageCorrection_(False)
