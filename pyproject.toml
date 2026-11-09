@@ -12,7 +12,9 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python>=4.9",
     "pillow>=10",
-    "rapidocr-onnxruntime>=1.2",
+    # OCR reserva para Linux/Windows. No macOS o OCR é o Vision da Apple; o rapidocr
+    # depende do onnxruntime, que não tem versão para Mac Intel nem Python 3.14.
+    "rapidocr-onnxruntime>=1.2; sys_platform != 'darwin'",
     # macOS: captura, janelas, permissões, OCR nativo e Acessibilidade
     "pyobjc-core>=10.3; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.3; sys_platform == 'darwin'",
@@ -24,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+rapidocr = ["rapidocr-onnxruntime>=1.2"]
 
 [project.scripts]
 candlesense = "candlesense.__main__:main"

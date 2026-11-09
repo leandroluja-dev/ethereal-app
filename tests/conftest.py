@@ -19,7 +19,10 @@ def load_fixture(name: str):
 
 @pytest.fixture(scope="session")
 def ocr():
-    pytest.importorskip("rapidocr_onnxruntime")
-    from candlesense.vision.ocr import RapidOcrEngine
+    """Vision no macOS; rapidocr nos outros sistemas. Pula se nenhum estiver instalado."""
+    from candlesense.vision.ocr import best_engine
 
-    return RapidOcrEngine()
+    try:
+        return best_engine()
+    except ImportError:
+        pytest.skip("nenhum OCR instalado (Vision ou rapidocr)")

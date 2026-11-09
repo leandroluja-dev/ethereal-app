@@ -146,7 +146,13 @@ def best_engine(prefer: str = "auto") -> OcrEngine:
             return VisionOcrEngine()
         except Exception as e:  # pyobjc ausente ou macOS antigo
             log.warning("Vision indisponível (%s); usando rapidocr", e)
-    return RapidOcrEngine()
+    try:
+        return RapidOcrEngine()
+    except ImportError as e:
+        raise ImportError(
+            "Nenhum OCR disponível. No macOS instale com: pip install -e . "
+            "(usa o Vision); em outros sistemas: pip install rapidocr-onnxruntime"
+        ) from e
 
 
 # ---------------------------------------------------------------- parsing ---
