@@ -21,6 +21,7 @@ from ..models import Box, Candle, ChartReading, Layout, OcrToken, PriceScale
 from .axis import axis_labels, fit_scale, grid_lines, grid_profile, scale_from_grid, snap_to_grid
 from .candles import ColorConfig, CandleDetection, detect_candles, measure_forming
 from .layout import build_layout, timeframe_from_axis
+from .wallet import account_kind, parse_money
 from .ocr import OcrEngine, is_clock_text, parse_clock, parse_number, parse_payout, parse_timer
 
 log = logging.getLogger(__name__)
@@ -106,6 +107,19 @@ def _colored_boxes(bgr: np.ndarray, axis: Box) -> list[Box]:
     return out
 
 
+def _money_from_tokens(toks: list[OcrToken]) -> Optional[float]:
+    for t in toks:
+        v = parse_money(t.text)
+        if v is not None and any(ch in t.text for ch in "$€£") and len(toks) == 1:
+            return v
+    # O OCR às vezes parte o valor ('$923.' + '.22'): junta da esquerda para a direita.
+    joined = "".join(t.text.strip() for t in sorted(toks, key=lambda t: t.box.x))
+    while ".." in joined:
+        joined = joined.replace("..", ".")
+    joined = joined.rstrip("▾▼v~-").strip()
+    return parse_money(joined)
+
+
 def _clean_digits(crop: np.ndarray) -> np.ndarray:
     """Números brancos sobre fundo escuro, sem a linha vertical colorida que passa por cima."""
     if crop.size == 0:
@@ -152,6 +166,8 @@ class ChartReader:
         self._expiry_cache = _OcrCache()
         self._clock_cache = _OcrCache()
         self._tf_cache = _OcrCache()
+        self._balance_cache = _OcrCache()
+        self._invest_cache = _OcrCache()
 
     # ------------------------------------------------------------------ API
 
@@ -254,6 +270,8 @@ class ChartReader:
         reading.reasons.extend(det.reasons)
         reading.pixel_candles = list(det.candles)
         lay = self.layout
+        if lay is not None and lay.width == bgr.shape[1]:
+            self._read_wallet(bgr, lay, reading)
         if lay is None or not det.candles:
             reading.ok = False
             if not reading.reasons:
@@ -366,6 +384,29 @@ class ChartReader:
         c.high = max(t["high"], c.open, c.close)
         c.low = min(t["low"], c.open, c.close)
         c.color = "verde" if c.close >= c.open else "vermelha"
+
+    def _read_wallet(self, bgr: np.ndarray, lay: Layout, reading: ChartReading) -> None:
+        """Saldo (e a cor: real/treino) e valor da entrada. OCR só quando o recorte muda."""
+        reading.asset = lay.asset
+        if lay.balance is not None:
+            v = self._money(bgr, lay.balance, self._balance_cache)
+            if v is not None:
+                reading.balance = v
+                reading.account = account_kind(bgr, lay.balance)
+        if lay.invest is not None:
+            reading.invest_amount = self._money(bgr, lay.invest, self._invest_cache)
+
+    def _money(self, bgr: np.ndarray, box: Box, cache: _OcrCache) -> Optional[float]:
+        key = _crop_key(bgr, box)
+        if key and key == cache.key:
+            return cache.value
+        toks = self.ocr.read(bgr, box)
+        val = _money_from_tokens(toks)
+        if val is None:
+            crop = _clean_digits(bgr[box.y:box.y2, box.x:box.x2])
+            val = _money_from_tokens(self.ocr.read(crop, Box(0, 0, crop.shape[1], crop.shape[0])))
+        cache.key, cache.value, cache.t = key, val, time.monotonic()
+        return val
 
     def _read_trade_texts(self, bgr: np.ndarray, lay: Layout, reading: ChartReading) -> None:
         """Prazo de compra, expiração escolhida, relógio da IQ e tempo da vela."""

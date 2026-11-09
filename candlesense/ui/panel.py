@@ -8,6 +8,7 @@ e para o modo ``debug`` com capturas salvas.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
 
@@ -87,10 +88,10 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
 
 
 class _Canvas:
-    def __init__(self, scale: float) -> None:
+    def __init__(self, scale: float, height: int = 1400) -> None:
         self.s = scale
         self.w = int(W * scale)
-        self.img = Image.new("RGB", (self.w, int(1400 * scale)), BG)
+        self.img = Image.new("RGB", (self.w, int(height * scale)), BG)
         self.d = ImageDraw.Draw(self.img)
         self.y = 0
 
@@ -119,6 +120,57 @@ class _Canvas:
     def crop(self) -> np.ndarray:
         img = self.img.crop((0, 0, self.w, self.y + self.px(PAD)))
         return np.asarray(img)[:, :, ::-1].copy()  # RGB -> BGR (OpenCV)
+
+
+@dataclass
+class PanelExtras:
+    """O que o painel mostra além da decisão: carteira, operação aberta e alerta de saída."""
+
+    wallet_line: Optional[str] = None
+    wallet_profit: Optional[float] = None
+    open_line: Optional[str] = None
+    exit_alert: Optional[str] = None
+    details: bool = False       # explicação dos módulos (tecla d)
+    chart: bool = True          # mini gráfico ao vivo
+
+
+def _mini_chart(c: "_Canvas", reading: ChartReading, n: int = 36, h: float = 92) -> None:
+    """As velas que o app está lendo, redesenhadas: confira se batem com a IQ Option."""
+    cs = [k for k in (reading.candles or []) if k.high is not None and k.low is not None][-n:]
+    if len(cs) < 3:
+        return
+    lo = min(k.low for k in cs)
+    hi = max(k.high for k in cs)
+    if reading.current_price is not None:
+        lo, hi = min(lo, reading.current_price), max(hi, reading.current_price)
+    if hi <= lo:
+        return
+    x0, x1 = PAD, W - PAD - 58
+    top = c.y / c.s
+    step = (x1 - x0) / n
+    bw = max(2.0, step * 0.62)
+
+    def ypx(v: float) -> int:
+        return c.px(top + 4 + (hi - v) / (hi - lo) * (h - 8))
+
+    c.d.rectangle([c.px(x0), c.px(top), c.px(W - PAD), c.px(top + h)], fill=(30, 33, 39))
+    for i, k in enumerate(cs):
+        cx = x0 + (n - len(cs) + i + 0.5) * step
+        up = k.close >= k.open
+        col = GREEN if up else RED
+        c.d.line([(c.px(cx), ypx(k.high)), (c.px(cx), ypx(k.low))], fill=col, width=max(1, c.px(1)))
+        y_a, y_b = sorted((ypx(k.open), ypx(k.close)))
+        c.d.rectangle([c.px(cx - bw / 2), y_a, c.px(cx + bw / 2), max(y_b, y_a + 1)],
+                      fill=col if not k.forming else None, outline=col)
+    if reading.current_price is not None:
+        y = ypx(reading.current_price)
+        c.d.line([(c.px(x0), y), (c.px(x1 + 4), y)], fill=(200, 200, 210), width=1)
+        dec = reading.scale.decimals if reading.scale else 5
+        c.d.text((c.px(x1 + 8), y - c.px(7)), f"{reading.current_price:.{dec}f}",
+                 font=_font(c.px(11)), fill=FG)
+    c.y = c.px(top + h + 4)
+    c.text(PAD, "Leitura ao vivo das velas (confira se bate com a IQ Option)", 11, DIM)
+    c.space(16)
 
 
 def _gauge(c: "_Canvas", d: Decision) -> None:
@@ -156,10 +208,12 @@ def _gauge(c: "_Canvas", d: Decision) -> None:
     c.rule()
 
 
-def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0) -> np.ndarray:
+def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0,
+           extras: Optional[PanelExtras] = None) -> np.ndarray:
     """Imagem BGR do painel."""
     c = _Canvas(scale)
     d = decision
+    ex = extras or PanelExtras(details=True, chart=False)
     head = HEAD_COLOR.get(d.action, GREY)
 
     # Faixa principal
@@ -174,11 +228,32 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
     elif d.best is not None:
         lado = "alta" if d.best.direction == COMPRA else "baixa"
         c.text(PAD, f"mais provável: {lado} {_pct(d.best.prob)} em {d.expiry_text()}", 16, (255, 255, 255), dy=48)
-    c.y = c.px(hh + 10)
+    c.y = c.px(hh)
+
+    # Alerta de saída: faixa vermelha logo abaixo da decisão
+    if ex.exit_alert:
+        c.d.rectangle([0, c.y, c.w, c.y + c.px(30)], fill=(170, 30, 30))
+        c.space(6)
+        c.text(PAD, "SAIR? " + ex.exit_alert, 14, (255, 255, 255), bold=True)
+        c.space(24)
+    c.space(10)
 
     # Medidor de força (venda forte ... compra forte)
     if d.strength is not None:
         _gauge(c, d)
+
+    if ex.chart and reading is not None and reading.ok:
+        _mini_chart(c, reading)
+
+    # Carteira (deduzida do saldo da tela)
+    if ex.wallet_line or ex.open_line:
+        if ex.open_line:
+            c.para(ex.open_line, 14, ORANGE, bold=True)
+        if ex.wallet_line:
+            col = FG if not ex.wallet_profit else GREEN if ex.wallet_profit > 0 else RED
+            c.para(ex.wallet_line, 13, col)
+        c.para("c: carteira e placar  ·  d: detalhes  ·  q: fechar", 11, DIM)
+        c.rule()
 
     # Tempo para entrar e fase da vela
     if d.action != INCERTA:
@@ -217,7 +292,7 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
             c.rule()
 
         # Módulos
-        for m in d.modules:
+        for m in (d.modules if ex.details else []):
             c.text(PAD, m.name, 14, FG, bold=True)
             bx, bw, by = PAD + 190, W - 2 * PAD - 190, c.y + c.px(6)
             c.d.rectangle([c.px(bx), by, c.px(bx + bw), by + c.px(6)], fill=LINE)
@@ -229,7 +304,8 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
             c.space(19)
             c.para(m.explanation, 12, DIM)
             c.space(4)
-        c.rule()
+        if ex.details:
+            c.rule()
 
     # Por que não entrar / motivo da incerteza
     if d.reasons:
@@ -265,6 +341,8 @@ class PanelWindow:
         cv2.namedWindow(self.NAME, cv2.WINDOW_AUTOSIZE)
         self._topmost()
         self._seen_open = False
+        self._placed = False
+        self.place: Optional[tuple[int, int]] = None  # canto de cima à esquerda, em pontos da tela
 
     def _topmost(self) -> None:
         try:
@@ -272,8 +350,15 @@ class PanelWindow:
         except Exception:  # backend sem suporte: a janela fica normal
             pass
 
-    def show(self, decision: Decision, reading: Optional[ChartReading] = None) -> None:
-        self.cv2.imshow(self.NAME, render(decision, reading, self.scale))
+    def show(self, decision: Decision, reading: Optional[ChartReading] = None,
+             extras: Optional[PanelExtras] = None) -> None:
+        self.cv2.imshow(self.NAME, render(decision, reading, self.scale, extras))
+        if not self._placed and self.place is not None:
+            try:
+                self.cv2.moveWindow(self.NAME, *self.place)
+            except Exception:
+                pass
+            self._placed = True
 
     def is_open(self) -> bool:
         """Falso só se a janela já foi vista aberta e agora sumiu (bolinha vermelha).

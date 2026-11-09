@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS trades (
     app_action TEXT, app_prob REAL,
     closed REAL, result TEXT, profit REAL, direction TEXT, exit_price REAL
 );
+CREATE TABLE IF NOT EXISTS signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL, asset TEXT NOT NULL, tf INTEGER NOT NULL, candle_end INTEGER NOT NULL,
+    action TEXT NOT NULL, prob REAL, best_h INTEGER, price REAL, payout INTEGER,
+    outcome INTEGER
+);
 CREATE INDEX IF NOT EXISTS idx_pred_open ON predictions (asset, tf, candle_end);
 CREATE INDEX IF NOT EXISTS idx_trades_day ON trades (opened);
 """
@@ -109,6 +115,49 @@ class Store:
         self.db.commit()
         self.resolve()
 
+    def record_signal(self, r: ChartReading, d: Decision, asset: str = "?", now: Optional[float] = None) -> None:
+        """Um sinal (COMPRA/VENDA) que acabou de acender."""
+        if not d.signal or not r.timeframe_s or r.timer_seconds is None or r.current_price is None:
+            return
+        now = time.time() if now is None else now
+        tf = int(r.timeframe_s)
+        self.db.execute(
+            "INSERT INTO signals (ts, asset, tf, candle_end, action, prob, best_h, price, payout) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (now, asset, tf, candle_end_ts(now, r.timer_seconds, tf), d.action,
+             d.best.prob if d.best else None, d.best.candles if d.best else 1, r.current_price, r.payout_pct))
+        self.db.commit()
+
+    def signals(self, since: float = 0.0) -> list[dict]:
+        cur = self.db.execute("SELECT id, ts, asset, tf, action, prob, best_h, price, payout, outcome "
+                              "FROM signals WHERE ts >= ? ORDER BY ts", (since,))
+        keys = ("id", "ts", "asset", "tf", "action", "prob", "best_h", "price", "payout", "outcome")
+        return [dict(zip(keys, row)) for row in cur]
+
+    # ------------------------------------------------------------ carteira
+
+    def open_trade(self, **kw) -> int:
+        cols = ", ".join(kw)
+        q = ", ".join("?" for _ in kw)
+        cur = self.db.execute(f"INSERT INTO trades ({cols}) VALUES ({q})", tuple(kw.values()))
+        self.db.commit()
+        return int(cur.lastrowid)
+
+    def close_trade(self, trade_id: int, **kw) -> None:
+        sets = ", ".join(f"{k}=?" for k in kw)
+        self.db.execute(f"UPDATE trades SET {sets} WHERE id=?", (*kw.values(), trade_id))
+        self.db.commit()
+
+    def trades(self, since: float = 0.0, account: Optional[str] = None) -> list[dict]:
+        q = "SELECT * FROM trades WHERE opened >= ?"
+        args: list = [since]
+        if account:
+            q += " AND account = ?"
+            args.append(account)
+        cur = self.db.execute(q + " ORDER BY opened", args)
+        names = [c[0] for c in cur.description]
+        return [dict(zip(names, row)) for row in cur]
+
     def resolve(self) -> int:
         """Confere as previsões cujo prazo já fechou: 1 = subiu, 0 = caiu, -1 = empate."""
         n = 0
@@ -121,6 +170,17 @@ class Store:
                 out = 1 if close > price else 0 if close < price else -1
                 self.db.execute(f"UPDATE predictions SET {oc}=? WHERE id=?", (out, pid))
                 n += 1
+        # Sinais: confere na vela do prazo sugerido (best_h).
+        q = ("SELECT s.id, s.price, s.action, c.close FROM signals s JOIN candles c "
+             "ON c.asset=s.asset AND c.tf=s.tf AND c.end_ts = s.candle_end + (s.best_h - 1) * s.tf "
+             "WHERE s.outcome IS NULL AND c.updated >= c.end_ts + 10")
+        for sid, price, action, close in self.db.execute(q).fetchall():
+            if close == price:
+                out = -1
+            else:
+                out = int((close > price) == (action == "COMPRA"))
+            self.db.execute("UPDATE signals SET outcome=? WHERE id=?", (out, sid))
+            n += 1
         if n:
             self.db.commit()
         return n

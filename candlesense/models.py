@@ -143,6 +143,8 @@ class Layout:
     time_axis: Optional[Box] = None  # faixa dos rótulos de hora abaixo do gráfico
     timeframe_s: Optional[int] = None  # tempo de cada vela, em segundos
     asset: Optional[str] = None  # ativo do gráfico, ex.: "EUR/USD (OTC)"
+    balance: Optional[Box] = None  # saldo no topo
+    invest: Optional[Box] = None  # valor da entrada ("Invest")
     green_hsv: Optional[tuple[int, int, int]] = None
     red_hsv: Optional[tuple[int, int, int]] = None
 
@@ -165,6 +167,10 @@ class ChartReading:
     timeframe_s: Optional[int] = None  # tempo de cada vela (60 = 1 min)
     expiry_label: Optional[str] = None  # expiração escolhida na IQ, ex.: "18:16"
     expiry_seconds: Optional[int] = None  # quanto falta até essa expiração
+    balance: Optional[float] = None  # saldo mostrado na IQ
+    account: Optional[str] = None  # "real" (saldo verde) | "treino" (saldo laranja)
+    invest_amount: Optional[float] = None  # valor da entrada escolhido na IQ
+    asset: Optional[str] = None
     timings_ms: dict[str, float] = field(default_factory=dict)
 
     @property

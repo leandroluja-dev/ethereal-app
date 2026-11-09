@@ -175,6 +175,45 @@ def _diagnostic(img, r, dec) -> None:
         print(f"diagnóstico não salvo: {e!r}", flush=True)
 
 
+def _panel_place(win) -> tuple[int, int]:
+    """Painel no lado esquerdo da janela da IQ Option, longe dos botões de compra e venda (à direita)."""
+    return int(win.x + 70), int(win.y + 110)
+
+
+def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
+    """Atualiza a faixa da carteira no painel e a tela da carteira (se aberta)."""
+    from .history.wallet import day_start, summarize
+
+    since = day_start()
+    days = summarize(store.trades(since=since))
+    acc = account or wallet.account
+    a = days.get(acc) if acc else None
+    nome = {"real": "REAL", "treino": "treino"}.get(acc or "", "?")
+    if acc is None:
+        extras.wallet_line, extras.wallet_profit = "Carteira: saldo não lido ainda", None
+    elif a is None:
+        extras.wallet_line, extras.wallet_profit = f"Hoje ({nome}): nenhuma entrada", None
+    else:
+        extras.wallet_line = (f"Hoje ({nome}): {a.n} entradas · {a.wins}G {a.losses}P · "
+                              f"{'+' if a.profit >= 0 else '-'}${abs(a.profit):,.2f}")
+        extras.wallet_profit = a.profit
+    now = time.time()
+    op = [t for t in wallet.open if t.account == acc]
+    if op:
+        t = op[-1]
+        falta = max(0, int(t.expiry_ts - now))
+        lado = {"COMPRA": " (compra)", "VENDA": " (venda)"}.get(t.app_action or "", "")
+        extras.open_line = f"Operação aberta: ${t.amount:,.2f}{lado} · expira em {falta // 60}:{falta % 60:02d}"
+    else:
+        extras.open_line = None
+    if wallet_view is not None and wallet_view.visible:
+        from .history.scoreboard import score
+        from .ui.wallet_view import render_wallet
+
+        board = score(store.predictions(since=now - 7 * 86400))
+        wallet_view.show(render_wallet(days, board, store.signals(since=since), wallet_view.scale))
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import hide_python_dock_icon
@@ -204,12 +243,25 @@ def cmd_live(args) -> int:
     store = Store(Path(args.dados) / "candlesense.db")
     engine.calibration = learn(store.predictions())
     last_learn = time.monotonic()
+    from .history.wallet import WalletTracker
+    from .ui.panel import PanelExtras
+
+    wallet = WalletTracker(store)
+    extras = PanelExtras()
+    wallet_view = None
+    wallet_dirty = True
+    last_wallet = 0.0
+    alerted: set[int] = set()
     print(f"OCR: {reader.ocr.name}")
     panel = None
     if not args.sem_painel:
         from .ui.panel import PanelWindow
 
         panel = PanelWindow(scale=args.painel_escala)
+        panel.place = _panel_place(win)
+        from .ui.wallet_view import WalletWindow
+
+        wallet_view = WalletWindow(scale=args.painel_escala)
         if APP_MODE:
             from .platform.appmode import hide_python_dock_icon
 
@@ -251,11 +303,47 @@ def cmd_live(args) -> int:
                     last_learn = time.monotonic()
             except Exception as e:  # o histórico nunca derruba a leitura
                 print(f"histórico: {e!r}", flush=True)
-            if dec.signal and dec.action != prev_signal and not args.sem_som:
-                from .alerts import play
+            from .alerts import play
 
-                play("entrar", voice=("compra" if dec.action == "COMPRA" else "venda") + ", " + dec.expiry_text())
+            if dec.signal and dec.action != prev_signal:
+                try:
+                    store.record_signal(r, dec, asset=asset)
+                except Exception as e:
+                    print(f"histórico: {e!r}", flush=True)
+                if not args.sem_som:
+                    play("entrar", voice=("compra" if dec.action == "COMPRA" else "venda") + ", " + dec.expiry_text())
             prev_signal = dec.action if dec.signal else None
+            if dec.signal:
+                wallet.note_signal(dec.action, dec.best.prob if dec.best else None)
+            # Carteira: entradas, ganhos e perdas pelo saldo da tela
+            try:
+                events = wallet.update(
+                    r.account, r.balance, price=r.current_price if r.ok else None, asset=asset,
+                    tf=r.timeframe_s, payout=r.payout_pct, expiry_seconds=r.expiry_seconds,
+                    invest=r.invest_amount)
+            except Exception as e:
+                events = []
+                print(f"carteira: {e!r}", flush=True)
+            for ev in events:
+                wallet_dirty = True
+                conta = "real" if ev.account == "real" else "treino"
+                if ev.kind == "entrada":
+                    print(f"carteira: entrada de ${ev.amount:.2f} na conta {conta}", flush=True)
+                else:
+                    print(f"carteira: {ev.kind} {ev.profit:+.2f} na conta {conta}", flush=True)
+                    if not args.sem_som:
+                        play("resultado")
+            extras.exit_alert = wallet.exit_alert(dec.strength if dec.action != "INCERTA" else None)
+            if extras.exit_alert:
+                new = [t.id for t in wallet.open if t.id not in alerted]
+                if new:
+                    alerted.update(new)
+                    if not args.sem_som:
+                        play("sair", voice="atenção, considere sair")
+            if wallet_dirty or time.monotonic() - last_wallet > 1:
+                _wallet_extras(extras, wallet, store, r.account, wallet_view)
+                wallet_dirty = False
+                last_wallet = time.monotonic()
             total = (time.perf_counter() - t0) * 1000
             line = f"[{time.strftime('%H:%M:%S')}] {dec.summary()} | {r.summary()} | total {total:.0f}ms"
             if APP_MODE:
@@ -268,10 +356,19 @@ def cmd_live(args) -> int:
             if APP_MODE:
                 _diagnostic(img, r, dec)
             if panel is not None:
-                panel.show(dec, r)
-                if not (args.debug or save_dir) and cv2.waitKey(1) & 0xFF in (27, ord("q")):
-                    print("fechado com q/Esc", flush=True)
-                    break
+                panel.show(dec, r, extras)
+                if not (args.debug or save_dir):
+                    key = cv2.waitKey(1) & 0xFF
+                    if key in (27, ord("q")):
+                        print("fechado com q/Esc", flush=True)
+                        break
+                    if key == ord("d"):
+                        extras.details = not extras.details
+                    if key == ord("c") and wallet_view is not None:
+                        wallet_view.toggle()
+                        wallet_dirty = True
+                    if key == ord("g"):
+                        extras.chart = not extras.chart
                 if not panel.is_open():
                     print("painel fechado pela janela", flush=True)
                     break  # fechou pela bolinha vermelha

@@ -13,6 +13,7 @@ import numpy as np
 
 from ..models import Box, Layout, OcrToken
 from .candles import CandleDetection
+from .wallet import find_balance, find_invest
 from .ocr import (is_clock_text, parse_clock, parse_number, parse_payout, parse_timeframe,
                   parse_timer)
 
@@ -255,5 +256,7 @@ def build_layout(bgr: np.ndarray, det: CandleDetection, tokens: list[OcrToken]) 
         axis=axis, timer=timer, payout=payout,
         purchase=purchase, expiry=expiry, clock=clock, time_axis=time_axis, timeframe_s=timeframe,
         asset=find_asset(tokens, det),
+        balance=find_balance(tokens, chart, w, h),
+        invest=find_invest(tokens, w, h),
         green_hsv=det.green_hsv, red_hsv=det.red_hsv,
     )
