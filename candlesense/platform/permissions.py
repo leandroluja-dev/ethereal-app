@@ -85,14 +85,12 @@ def guide(need_accessibility: bool = False, wait_s: float = 180.0, out=print) ->
         out("1. Vou abrir Ajustes do Sistema > Privacidade e Segurança > Gravação de Tela.")
         out("2. Ative a chave do app que você usa para rodar o CandleSense")
         out("   (o próprio CandleSense.app, ou o Terminal/iTerm se estiver rodando pelo terminal).")
-        out("3. O macOS pode pedir para reabrir o app. Depois disso é só rodar de novo.")
+        out("3. Depois de ativar, FECHE o Terminal por completo (Cmd+Q), abra de novo e rode o comando outra vez.")
+        out("   O macOS só aplica essa permissão quando o app é reaberto.")
         request_screen_recording()
         open_settings(SETTINGS_SCREEN)
-        st.screen_recording = _wait(screen_recording_granted, wait_s)
-        if st.screen_recording:
-            out("Gravação de Tela liberada.")
-        else:
-            out("Ainda não liberada. Se você já ativou a chave, feche e abra o app de novo.")
+        # Não adianta esperar aqui: a liberação só vale depois de reabrir o app.
+        st.screen_recording = screen_recording_granted()
 
     if need_accessibility and not st.accessibility:
         out("")
