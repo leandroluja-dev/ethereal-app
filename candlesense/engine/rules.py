@@ -180,7 +180,12 @@ class RuleEngine:
     def _evaluate(self, r: ChartReading) -> Decision:
         cfg = self.cfg
         if not r.ok:
-            return Decision(INCERTA, reasons=list(r.reasons) or ["leitura incerta"], timeframe_s=r.timeframe_s)
+            reasons = list(r.reasons) or ["leitura incerta"]
+            if len(r.candles) == 0 and any("eixo de preço não encontrado" in x or "velas em sequência" in x
+                                           or "gráfico não encontrado" in x for x in reasons):
+                reasons.insert(0, "não achei o gráfico de velas na janela da IQ Option "
+                                  "(ela está na tela de login ou em outra página?)")
+            return Decision(INCERTA, reasons=reasons, timeframe_s=r.timeframe_s)
         ctx = MarketContext.from_reading(r)
         if ctx is None:
             return Decision(INCERTA, reasons=["velas insuficientes na tela"], timeframe_s=r.timeframe_s)
