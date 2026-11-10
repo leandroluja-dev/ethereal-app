@@ -189,6 +189,10 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
     acc = account or wallet.account
     a = days.get(acc) if acc else None
     nome = {"real": "REAL", "treino": "treino"}.get(acc or "", "?")
+    extras.wallet_account = acc
+    extras.wallet_n = a.n if a is not None else (0 if acc else None)
+    extras.wallet_wins = a.wins if a is not None else 0
+    extras.wallet_losses = a.losses if a is not None else 0
     if acc is None:
         extras.wallet_line, extras.wallet_profit = "Carteira: saldo não lido ainda", None
     elif a is None:
@@ -204,8 +208,11 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
         falta = max(0, int(t.expiry_ts - now))
         lado = {"COMPRA": " (compra)", "VENDA": " (venda)"}.get(t.app_action or "", "")
         extras.open_line = f"Operação aberta: ${t.amount:,.2f}{lado} · expira em {falta // 60}:{falta % 60:02d}"
+        extras.open_trade = {"amount": t.amount, "direction": t.app_action, "entry_price": t.entry_price,
+                             "payout": t.payout, "seconds_left": falta}
     else:
         extras.open_line = None
+        extras.open_trade = None
     if wallet_view is not None and wallet_view.visible:
         from .history.scoreboard import score
         from .ui.wallet_view import render_wallet
@@ -359,7 +366,9 @@ def cmd_live(args) -> int:
             if APP_MODE:
                 _diagnostic(img, r, dec)
             if panel is not None:
-                panel.show(dec, r, extras)
+                # Uma janela só: a carteira aparece dentro do próprio painel
+                overlay = wallet_view.image if wallet_view is not None and wallet_view.visible else None
+                panel.show(dec, r, extras, overlay=overlay)
                 if not (args.debug or save_dir):
                     key = cv2.waitKey(1) & 0xFF
                     if key in (27, ord("q")):
