@@ -312,6 +312,18 @@ def _restart_for_update(panel, src, store) -> None:
     restart()
 
 
+def _keep_awake() -> None:
+    """Mac acordado e com a tela ligada enquanto o app roda (a captura para se a tela apagar)."""
+    import os
+    import subprocess
+
+    try:
+        subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"não consegui manter o Mac acordado: {e!r}", flush=True)
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import close_other_instances, hide_python_dock_icon
@@ -322,6 +334,7 @@ def cmd_live(args) -> int:
         hide_python_dock_icon()
     if not _check_platform():
         return 2
+    _keep_awake()
     from .platform.capture import open_window_source, timed_grab
 
     win = _find_window_or_wait(wait=True)
