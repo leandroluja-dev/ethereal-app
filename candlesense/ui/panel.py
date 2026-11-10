@@ -34,16 +34,20 @@ R_CARD = 18      # raio dos cartões
 SS = 2           # superamostragem (desenha 2x e reduz)
 MIN_H = 700      # altura mínima do painel (sem detalhes)
 
-BG = (0, 0, 0)
-CARD = (28, 28, 30)
-CARD_2 = (44, 44, 47)       # pílulas e trilhos dentro de cartões
-CARD_3 = (66, 66, 70)       # pílula selecionada
-FG = (245, 245, 247)
-DIM = (152, 152, 158)
-FAINT = (92, 92, 97)
-LINE = (52, 52, 56)
-GREEN = (60, 196, 142)      # verde menta da referência
-RED = (240, 84, 84)
+# Visual "vidro sobre verde-escuro": fundo em degradê verde quase preto, cartões de vidro
+# fosco (degradê cinza com borda clara), cartão verde brilhante para ganho e vermelho para perda.
+BG = (6, 12, 9)
+BG_TOP = (10, 30, 19)       # alto da janela (verde-escuro)
+BG_BOT = (4, 7, 6)          # embaixo (quase preto)
+CARD = (30, 34, 33)
+CARD_2 = (46, 51, 49)       # pílulas e trilhos dentro de cartões
+CARD_3 = (70, 76, 73)       # pílula selecionada
+FG = (240, 244, 241)
+DIM = (150, 160, 154)
+FAINT = (88, 98, 92)
+LINE = (50, 58, 54)
+GREEN = (64, 210, 112)      # verde vivo
+RED = (232, 70, 70)
 ORANGE = (245, 160, 60)
 GREY = (120, 120, 126)
 WHITE = (255, 255, 255)
@@ -115,6 +119,55 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
     return lines
 
 
+# tons de vidro: (cor do canto de cima à esquerda, cor de baixo à direita, borda)
+GLASS = {
+    "card": ((44, 49, 47), (20, 24, 23), (64, 72, 68)),
+    "pill": ((58, 64, 61), (36, 41, 39), (78, 86, 82)),
+    "pill_on": ((92, 100, 96), (58, 64, 61), (120, 130, 125)),
+    "green": ((70, 214, 118), (16, 96, 50), (108, 232, 150)),
+    "red": ((214, 70, 70), (88, 20, 24), (240, 110, 110)),
+}
+
+
+def _tone_of(fill, h_units: float):
+    if fill == CARD:
+        return "card"
+    if fill == CARD_2:
+        return "pill"
+    if fill == CARD_3:
+        return "pill_on"
+    if h_units >= 40 and fill == GREEN:
+        return "green"
+    if h_units >= 40 and fill in (RED, (150, 28, 32)):
+        return "red"
+    return None
+
+
+@lru_cache(maxsize=256)
+def _glass_tile(w: int, h: int, tone: str) -> Image.Image:
+    a, b, _ = GLASS[tone]
+    xs = np.linspace(0.0, 1.0, max(1, w), dtype=np.float32)[None, :]
+    ys = np.linspace(0.0, 1.0, max(1, h), dtype=np.float32)[:, None]
+    t = np.clip(0.35 * xs + 0.65 * ys, 0, 1)[..., None]
+    arr = (np.array(a, np.float32) * (1 - t) + np.array(b, np.float32) * t).astype(np.uint8)
+    return Image.fromarray(arr, "RGB")
+
+
+def bg_color(y_units: float):
+    t = max(0.0, min(1.0, y_units / 900.0))
+    return tuple(int(round(BG_TOP[i] * (1 - t) + BG_BOT[i] * t)) for i in range(3))
+
+
+def bg_block(h_px: int, w_px: int, scale: float = 1.0, y0_px: int = 0) -> np.ndarray:
+    """Pedaço do fundo (BGR) na altura certa, para emendar imagens sem faixa preta."""
+    ys = (np.arange(y0_px, y0_px + max(0, h_px), dtype=np.float32) / max(scale, 1e-6))
+    t = np.clip(ys / 900.0, 0, 1)[:, None, None]
+    top = np.array(BG_TOP[::-1], np.float32)
+    bot = np.array(BG_BOT[::-1], np.float32)
+    col = (top * (1 - t) + bot * t).astype(np.uint8)
+    return np.ascontiguousarray(np.broadcast_to(col, (max(0, h_px), max(0, w_px), 3)))
+
+
 class _Canvas:
     """Folha de desenho. Coordenadas em unidades do painel; ``y`` corre em pixels internos."""
 
@@ -123,7 +176,8 @@ class _Canvas:
         self.s = scale * SS
         self.uw = width  # largura em unidades do painel
         self.w = int(round(width * self.s))
-        self.img = Image.new("RGB", (self.w, int(height * self.s)), BG)
+        h_px = int(height * self.s)
+        self.img = Image.fromarray(bg_block(h_px, self.w, self.s)[:, :, ::-1].copy(), "RGB")
         self.d = ImageDraw.Draw(self.img)
         self.y = 0
 
@@ -168,8 +222,24 @@ class _Canvas:
 
     # formas
     def rrect(self, x1, y1, x2, y2, r, fill=None, outline=None, width: float = 1) -> None:
+        tone = _tone_of(fill, y2 - y1) if fill is not None else None
+        if tone is not None:
+            self.glass(x1, y1, x2, y2, r, tone, outline=outline, width=width)
+            return
         self.d.rounded_rectangle([self.px(x1), self.px(y1), self.px(x2), self.px(y2)], radius=self.px(r),
                                  fill=fill, outline=outline, width=self.px(width) if outline else 0)
+
+    def glass(self, x1, y1, x2, y2, r, tone: str = "card", outline=None, width: float = 1) -> None:
+        """Cartão de vidro: degradê do canto de cima à esquerda para baixo, com borda clara."""
+        box = [self.px(x1), self.px(y1), self.px(x2), self.px(y2)]
+        w, h = box[2] - box[0], box[3] - box[1]
+        if w <= 2 or h <= 2:
+            return
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=self.px(r), fill=255)
+        self.img.paste(_glass_tile(w, h, tone), (box[0], box[1]), mask)
+        self.d.rounded_rectangle(box, radius=self.px(r), outline=outline or GLASS[tone][2],
+                                 width=max(1, self.px(width if outline else 1)))
 
     def card(self, y1: float, y2: float, fill=CARD) -> None:
         self.rrect(PAD, y1, W - PAD, y2, R_CARD, fill=fill)
@@ -561,7 +631,7 @@ def _action_card(c: _Canvas, d: Decision, ex: PanelExtras) -> None:
             c.at(inner, y0 + 96 + 18 * i, ln, 13, (255, 215, 215))
     elif d.signal and not t:
         buy = d.action == COMPRA
-        bg, fg = (GREEN, BLACK) if buy else (RED, WHITE)
+        bg, fg = (GREEN, WHITE) if buy else (RED, WHITE)
         c.rrect(PAD, y0, W - PAD, y0 + h, R_CARD, fill=bg)
         c.at(inner, y0 + 50, "COMPRE AGORA" if buy else "VENDA AGORA", 32, fg, "bold", anchor="ls")
         c.at(inner, y0 + 64, f"Clique em {'HIGHER ▲' if buy else 'LOWER ▼'}", 19, fg, "semibold")
@@ -846,7 +916,8 @@ class PanelWindow:
                 side = sides.image(full)
                 if side is not None:
                     if full > img.shape[0]:  # o painel fica no alto; embaixo dele, fundo preto
-                        img = np.vstack([img, np.zeros((full - img.shape[0], img.shape[1], 3), np.uint8)])
+                        img = np.vstack([img, bg_block(full - img.shape[0], img.shape[1], self.scale,
+                                                       img.shape[0])])
                     self._side_x0 = img.shape[1]  # onde começam as telas (para o clique nas abas)
                     self._sides = sides
                     img = np.hstack([img, side])

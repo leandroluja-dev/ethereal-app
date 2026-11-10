@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 
-from .panel import (BLACK, CARD, CARD_2, DIM, FAINT, FG, GAP, GREEN, LINE, ORANGE, PAD, R_CARD, RED, W, WHITE,
+from .panel import (bg_block, BLACK, CARD, CARD_2, CARD_3, DIM, FAINT, FG, GAP, GREEN, LINE, ORANGE, PAD, R_CARD, RED, W, WHITE,
                     _Canvas, _icon, _mmss)
 
 BLUE = (88, 160, 255)
@@ -245,7 +245,7 @@ def _wallet_band(c: _Canvas, spec: WalletSpec, st: SimState, y0: float, h: float
     if flash:
         e = flash[-1]
         won, tie = e["status"] == "ganhou", e["status"] == "empate"
-        bg, fg = (GREEN, BLACK) if won else ((CARD_2, FG) if tie else (RED, WHITE))
+        bg, fg = (GREEN, WHITE) if won else ((CARD_2, FG) if tie else (RED, WHITE))
         c.rrect(inner - 6, ly, right + 6, ly + live_h - 6, 14, fill=bg)
         c.at(inner + 6, ly + 34, "GANHOU" if won else "EMPATE" if tie else "PERDEU", 26, fg, "bold", anchor="ls")
         c.at(right - 6, ly + 34, brl(e["profit"] or 0.0), 22, fg, "bold", anchor="rs")
@@ -522,6 +522,242 @@ def render_hist_days(st: SimState, height: float, scale: float = 1.0) -> np.ndar
 
 
 # ---------------------------------------------------------------------------
+# Hoje (tela larga): total, carteiras lado a lado e a linha do tempo do dia
+# ---------------------------------------------------------------------------
+
+WIDE = 2 * W + GAP_PX  # largura das telas laterais juntas (unidades do painel)
+
+
+def _total_card(c: _Canvas, st: SimState, x1: float, y0: float, x2: float, h: float) -> None:
+    tot = day_summary([e for w in WALLETS for e in st.get(w.key)])
+    tp = tot["profit"] if tot["done"] else 0.0
+    tone = GREEN if tp > 0 else RED if tp < 0 else CARD
+    c.rrect(x1, y0, x2, y0 + h, R_CARD, fill=tone)
+    fg = WHITE if tp else FG
+    sub = (225, 248, 232) if tp > 0 else (255, 225, 225) if tp < 0 else DIM
+    c.at(x1 + 18, y0 + 24, "Total do dia · todas as carteiras", 12, sub, "medium", anchor="lm")
+    c.at(x2 - 18, y0 + 24, "GREEN" if tp > 0 else "LOSS" if tp < 0 else "ZERO", 12, fg, "bold", anchor="rm")
+    c.at(x1 + 16, y0 + 84, brl(tp), 38, fg, "regular", anchor="ls")
+    acc = f"{_pc(tot['acc'])} de acerto" if tot["acc"] is not None else "sem resultado"
+    c.at(x1 + 18, y0 + h - 18, f"{tot['n']} entradas · {tot['wins']}G {tot['losses']}P · {acc}", 12, sub,
+         anchor="ls")
+
+
+def _model_card(c: _Canvas, st: SimState, x1: float, y0: float, x2: float, h: float) -> None:
+    """A última conta do modelo (ou o que falta para ele começar)."""
+    c.rrect(x1, y0, x2, y0 + h, R_CARD, fill=CARD)
+    inner, right = x1 + 18, x2 - 18
+    c.at(inner, y0 + 24, "Modelo agora", 12, DIM, "medium", anchor="lm")
+    if st.asset:
+        c.at(right, y0 + 24, st.asset, 12, DIM, "medium", anchor="rm")
+    fresh = st.last_p is not None and st.last_ts is not None and st.now - st.last_ts < 180
+    if not st.available or st.note or (st.hist_min is not None and st.hist_min < st.hist_need) or not fresh:
+        if not st.available:
+            msg = "Simulador indisponível nesta versão."
+        elif st.note:
+            msg = st.note
+        elif st.hist_min is not None and st.hist_min < st.hist_need:
+            msg = f"Juntando histórico: {st.hist_min} de {st.hist_need} min"
+        else:
+            msg = "Esperando a próxima vela de 1 min fechar."
+        from .panel import _wrap
+
+        for i, ln in enumerate(_wrap(c.d, msg, c.font(14), c.px(right - inner))[:3]):
+            c.at(inner, y0 + 56 + 20 * i, ln, 14, FG)
+        return
+    ch = max(st.last_p, 1 - st.last_p)
+    buy = st.last_p >= 0.5
+    col = GREEN if buy else RED
+    _icon(c, "up" if buy else "down", inner, y0 + h - 58, col, 16)
+    c.at(inner + 22, y0 + h - 50, "compra" if buy else "venda", 15, col, "semibold", anchor="lm")
+    c.at(right, y0 + h - 18, _pc(ch), 40, FG, "regular", anchor="rs")
+    c.at(inner, y0 + h - 22, f"conta das {_hhmm(st.last_ts)} · entra a partir de 55%", 11, DIM, anchor="ls")
+    _bar(c, inner, right, y0 + 40, (ch - 0.5) / 0.12, col)
+    for cut in (0.55, 0.58, 0.62):  # marquinhas dos cortes das carteiras
+        x = inner + (right - inner) * (cut - 0.5) / 0.12
+        c.d.line([(c.px(x), c.px(y0 + 37)), (c.px(x), c.px(y0 + 49))], fill=FAINT, width=c.px(1))
+        c.at(x, y0 + 56, _pc(cut), 9, FAINT, anchor="mm")
+
+
+def _wallet_tile(c: _Canvas, spec: WalletSpec, st: SimState, x1: float, y0: float, x2: float, h: float) -> None:
+    es = st.get(spec.key)
+    s = day_summary(es)
+    flash = [e for e in es if e["status"] in ("ganhou", "perdeu")
+             and e.get("seen_at") is not None and st.now - e["seen_at"] <= FLASH_S]
+    tone = CARD
+    if flash:
+        tone = GREEN if flash[-1]["status"] == "ganhou" else RED
+    c.rrect(x1, y0, x2, y0 + h, 16, fill=tone, outline=None if flash else tuple(int(v * 0.5) for v in spec.color))
+    inner, right = x1 + 12, x2 - 12
+    _letter(c, inner, y0 + 20, spec, 9)
+    c.at(inner + 24, y0 + 20, spec.name, 12, FG, "semibold", anchor="lm")
+    c.at(inner, y0 + 42, spec.desc, 10, DIM if not flash else WHITE, anchor="lm")
+    bal = st.balances().get(spec.key, 0.0)
+    c.at(inner, y0 + 70, brl(bal, False).replace("R$ ", "R$"), 17, FG if not flash else WHITE, "medium", anchor="lm")
+    opened = [e for e in es if e["status"] == "aberta"]
+    if flash:
+        e = flash[-1]
+        c.at(inner, y0 + h - 16, ("GANHOU " if e["status"] == "ganhou" else "PERDEU ") + brl(e["profit"] or 0),
+             12, WHITE, "bold", anchor="ls")
+    elif opened:
+        e = opened[-1]
+        c.at(inner, y0 + h - 16, f"{'▲' if e['side'] == 'COMPRA' else '▼'} aberta · "
+                                 f"{_mmss(max(0, int(e['expiry_ts'] - st.now)))}", 11, ORANGE, "semibold",
+             anchor="ls")
+    else:
+        day = brl(s["profit"]) if s["done"] else "R$ 0,00"
+        c.at(inner, y0 + h - 16, day, 11, _col(s["profit"]), "semibold", anchor="ls")
+        gp = f"{s['wins']}G {s['losses']}P"
+        if inner + c.tw(day, 11, "semibold") + 6 < right - c.tw(gp, 10):
+            c.at(right, y0 + h - 16, gp, 10, DIM, anchor="rs")
+
+
+def _timeline(c: _Canvas, st: SimState, x1: float, y0: float, x2: float, y1: float) -> None:
+    """Linha do tempo do dia: régua de horário em cima e cada entrada pendurada num cartão."""
+    rows = merged(st)
+    now = st.now or time.time()
+    # janela da régua: das 8 contas mais recentes até agora (mín. 20 min), para os fios ficarem retos
+    starts = sorted({(e["asset"], e["start"]): e["ts"] for e in rows}.values())[-8:]
+    t_end = now + 2 * 60
+    t_start = min(starts[0] - 2 * 60, t_end - 20 * 60) if starts else t_end - 30 * 60
+    t_start = max(t_start, t_end - 3 * 3600)
+    span = t_end - t_start
+    c.rrect(x1, y0, x2, y1, R_CARD, fill=CARD)
+    inner, right = x1 + 18, x2 - 18
+    c.at(inner, y0 + 22, "Linha do tempo", 14, FG, "semibold", anchor="lm")
+    c.at(inner + c.tw("Linha do tempo", 14, "semibold") + 10, y0 + 22, "últimas entradas de hoje", 12, DIM,
+         anchor="lm")
+    # legenda
+    lx = right
+    for lab, col in (("aberta", ORANGE), ("perdeu", RED), ("ganhou", GREEN)):
+        w = c.tw(lab, 11)
+        c.at(lx, y0 + 22, lab, 11, DIM, anchor="rm")
+        c.d.ellipse([c.px(lx - w - 14), c.px(y0 + 18), c.px(lx - w - 6), c.px(y0 + 26)], fill=col)
+        lx -= w + 26
+    ax = y0 + 64  # régua
+    ax1, ax2 = inner + 6, right - 6
+
+    def X(t):
+        return ax1 + (ax2 - ax1) * (t - t_start) / span
+
+    c.d.line([(c.px(ax1), c.px(ax)), (c.px(ax2), c.px(ax))], fill=LINE, width=c.px(1))
+    minor, label = (60, 300) if span <= 40 * 60 else (300, 900) if span <= 2 * 3600 else (600, 1800)
+    first = int(t_start // minor + 1) * minor
+    for t in range(first, int(t_end), minor):
+        big = t % label == 0
+        x = X(t)
+        c.d.line([(c.px(x), c.px(ax - (6 if big else 3))), (c.px(x), c.px(ax + (6 if big else 3)))],
+                 fill=DIM if big else FAINT, width=c.px(1))
+        if big and abs(x - X(now)) > 30:
+            c.at(x, ax - 16, _hhmm(t), 12, DIM, anchor="mm")
+    xn = X(now)  # agora
+    c.d.line([(c.px(xn), c.px(ax - 8)), (c.px(xn), c.px(y1 - 14))], fill=(40, 90, 60), width=c.px(1))
+    c.at(xn, ax - 16, "agora", 12, GREEN, "semibold", anchor="mm")
+    vis = [e for e in rows if e["ts"] >= t_start]
+    # todos viram um pontinho na régua
+    for e in vis:
+        stt = e["status"]
+        col = GREEN if stt == "ganhou" else RED if stt == "perdeu" else ORANGE if stt == "aberta" else FAINT
+        x = X(e["ts"])
+        c.d.ellipse([c.px(x - 3), c.px(ax - 3), c.px(x + 3), c.px(ax + 3)], fill=col)
+    # uma conta do modelo = um cartão (com as letras das carteiras que entraram), os mais novos,
+    # em zigue-zague de 3 alturas como numa linha do tempo; o fio liga o horário ao cartão
+    groups: dict = {}
+    for e in vis:
+        g = groups.setdefault((e["asset"], e["start"]), {"ts": e["ts"], "side": e["side"], "chance": e["chance"],
+                                                        "wallets": [], "profit": 0.0, "open": False,
+                                                        "expiry_ts": e["expiry_ts"], "done": False})
+        g["wallets"] += e["wallets"]
+        n = len(e["wallets"])
+        if e["status"] == "aberta":
+            g["open"] = True
+            g["expiry_ts"] = max(g["expiry_ts"], e["expiry_ts"])
+        elif e["profit"] is not None:
+            g["profit"] += e["profit"] * n
+            g["done"] = True
+    cards = sorted(groups.values(), key=lambda g: g["ts"])[-8:]
+    k = len(cards)
+    cw, chh = 150, 80
+    lanes = 3
+    top = ax + 40
+    lane_h = max(chh + 14, (y1 - 16 - top - chh) / (lanes - 1)) if lanes > 1 else 0
+    lane_h = min(lane_h, (y1 - 16 - top - chh) / (lanes - 1))
+    ends = [inner - 999.0] * lanes  # onde termina o último cartão de cada altura
+    placed = []
+    for i, g in enumerate(cards):
+        x = X(g["ts"])
+        want = min(max(x - cw / 2, inner), right - cw)
+        order = [(i + j) % lanes for j in range(lanes)]
+        fit = [ln for ln in order if ends[ln] + 8 <= want]
+        lane = fit[0] if fit else min(order, key=lambda ln: ends[ln])
+        cx1 = max(want, ends[lane] + 8)
+        if cx1 > right - cw + 0.5:
+            continue  # sem lugar: fica só o pontinho na régua
+        ends[lane] = cx1 + cw
+        placed.append((g, cx1, top + lane * lane_h, x))
+    def _lc(g):
+        done = g["done"] and not g["open"]
+        return GREEN if done and g["profit"] > 0 else RED if done and g["profit"] < 0 else \
+            ORANGE if g["open"] else DIM
+
+    for g, cx1, cy, x in placed:  # fios primeiro, cartões por cima
+        lc, mx = _lc(g), cx1 + cw / 2
+        c.d.line([(c.px(x), c.px(ax + 3)), (c.px(mx), c.px(cy))], fill=tuple(int(v * 0.75) for v in lc),
+                 width=c.px(1))
+        c.d.ellipse([c.px(mx - 3), c.px(cy - 3), c.px(mx + 3), c.px(cy + 3)], fill=lc)
+    for g, cx1, cy, x in placed:
+        net = g["profit"]
+        won = g["done"] and not g["open"] and net > 0
+        lost = g["done"] and not g["open"] and net < 0
+        lc = GREEN if won else RED if lost else ORANGE if g["open"] else DIM
+        c.rrect(cx1, cy, cx1 + cw, cy + chh, 16, fill=GREEN if won else RED if lost else CARD_2)
+        fg = WHITE if (won or lost) else FG
+        sub = (225, 245, 232) if won else (255, 220, 220) if lost else DIM
+        arrow = "▲ compra" if g["side"] == "COMPRA" else "▼ venda"
+        c.at(cx1 + 12, cy + 18, _hhmm(g["ts"]), 15, fg, "semibold", anchor="lm")
+        c.at(cx1 + 12, cy + 38, f"{arrow} · {_pc(g['chance'])}", 10, sub, anchor="lm")
+        lx = cx1 + cw - 10
+        for spec in sorted(set(g["wallets"]), key=lambda w: w.key, reverse=True):
+            _letter(c, lx - 12, cy + 18, spec, 6)
+            lx -= 14
+        if g["open"]:
+            left = int(g["expiry_ts"] - now)
+            val, lab = (_mmss(left), "aberta") if left > 0 else ("…", "conferindo")
+        elif not g["done"]:
+            val, lab = "—", "sem leitura"
+        else:
+            val, lab = brl(net).replace("R$ ", ""), "ganhou" if net > 0 else "perdeu" if net < 0 else "empate"
+        c.at(cx1 + 12, cy + chh - 12, lab, 10, sub, anchor="ls")
+        c.at(cx1 + cw - 12, cy + chh - 9, val, 22, fg, "regular", anchor="rs")
+    if not vis:
+        c.at((x1 + x2) / 2, (ax + y1) / 2, "nenhuma entrada ainda hoje", 13, DIM, anchor="mm")
+
+
+def render_today(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
+    """Aba Hoje: total do dia e modelo em cima, as cinco carteiras lado a lado e a linha do tempo."""
+    c = _Canvas(scale, height=int(height) + 40, width=int(round(WIDE)))
+    x1, x2 = PAD, WIDE - PAD
+    y = 10
+    top_h = 132
+    mid = x1 + (x2 - x1) * 0.5
+    _total_card(c, st, x1, y, mid - GAP / 2, top_h)
+    _model_card(c, st, mid + GAP / 2, y, x2, top_h)
+    y += top_h + GAP
+    n = len(WALLETS)
+    tw = (x2 - x1 - (n - 1) * 10) / n
+    th = 116
+    for i, spec in enumerate(WALLETS):
+        _wallet_tile(c, spec, st, x1 + i * (tw + 10), y, x1 + i * (tw + 10) + tw, th)
+    y += th + GAP
+    bottom = height - PAD - 20
+    _timeline(c, st, x1, y, x2, bottom)
+    c.at(x1 + 2, height - PAD - 6, f"Simulação com {brl(st.stake, False)} por entrada: o app nunca clica nem opera.",
+         11, FAINT, anchor="ls")
+    c.y = c.px(height)
+    return c.crop(min_h=height)
+
+
+# ---------------------------------------------------------------------------
 # Abas e montagem
 # ---------------------------------------------------------------------------
 
@@ -543,8 +779,8 @@ def render_tabs(tab: str, total_w: float, scale: float, st: Optional[SimState] =
     c = _Canvas(scale, height=TAB_H + 4, width=int(round(total_w)))
     for key, x1, x2 in _tab_rects(total_w):
         on = key == tab
-        c.rrect(x1, 8, x2, 38, 15, fill=FG if on else CARD, outline=None if on else LINE, width=1)
-        c.at((x1 + x2) / 2, 23, dict(TABS)[key], 13, BLACK if on else DIM, "semibold", anchor="mm")
+        c.rrect(x1, 8, x2, 38, 15, fill=CARD_3 if on else CARD_2)
+        c.at((x1 + x2) / 2, 23, dict(TABS)[key], 13, FG if on else DIM, "semibold" if on else "medium", anchor="mm")
     c.at(total_w - PAD - 6, 23, "h troca a aba", 11, FAINT, anchor="rm")
     c.y = c.px(TAB_H)
     img = c.crop(min_h=TAB_H)
@@ -557,24 +793,41 @@ def side_screens(st: SimState, height_px: int, scale: float = 1.0, tab: str = "h
     tabs_px = int(round(TAB_H * scale))
     body_px = max(1, height_px - tabs_px)
     h_units = body_px / scale
-    pair = (render_hist_wallets, render_hist_days) if tab == "historico" else (render_wallets, render_day)
+    if tab != "historico":
+        body = render_today(st, h_units, scale)
+        body = body[:body_px] if body.shape[0] >= body_px else \
+            np.vstack([body, bg_block(body_px - body.shape[0], body.shape[1], scale, tabs_px + body.shape[0])])
+        body = np.hstack([bg_block(body_px, gw, scale, tabs_px), body])
+        want_w = gw * 2 + 2 * int(round(W * scale))
+        if body.shape[1] < want_w:
+            body = np.hstack([body, bg_block(body_px, want_w - body.shape[1], scale, tabs_px)])
+        body = body[:, :want_w]
+        bar = render_tabs(tab, body.shape[1] / scale, scale, st)
+        bar = bar[:, : body.shape[1]]
+        if bar.shape[1] < body.shape[1]:
+            bar = np.hstack([bar, bg_block(bar.shape[0], body.shape[1] - bar.shape[1], scale)])
+        if bar.shape[0] != tabs_px:
+            bar = bar[:tabs_px] if bar.shape[0] > tabs_px else \
+                np.vstack([bar, bg_block(tabs_px - bar.shape[0], bar.shape[1], scale, bar.shape[0])])
+        return np.vstack([bar, body])
+    pair = (render_hist_wallets, render_hist_days)
     imgs = []
     for fn in pair:
         im = fn(st, h_units, scale)
         if im.shape[0] > body_px:
             im = im[:body_px]
         elif im.shape[0] < body_px:
-            im = np.vstack([im, np.zeros((body_px - im.shape[0], im.shape[1], 3), np.uint8)])
+            im = np.vstack([im, bg_block(body_px - im.shape[0], im.shape[1], scale, tabs_px + im.shape[0])])
         imgs.append(im)
-    gap = np.zeros((body_px, gw, 3), np.uint8)
+    gap = bg_block(body_px, gw, scale, tabs_px)
     body = np.hstack([gap, imgs[0], gap, imgs[1]])
     bar = render_tabs(tab, body.shape[1] / scale, scale, st)
     if bar.shape[1] != body.shape[1]:
         bar = np.ascontiguousarray(bar[:, : body.shape[1]]) if bar.shape[1] > body.shape[1] else \
-            np.hstack([bar, np.zeros((bar.shape[0], body.shape[1] - bar.shape[1], 3), np.uint8)])
+            np.hstack([bar, bg_block(bar.shape[0], body.shape[1] - bar.shape[1], scale)])
     if bar.shape[0] != tabs_px:
         bar = bar[:tabs_px] if bar.shape[0] > tabs_px else \
-            np.vstack([bar, np.zeros((tabs_px - bar.shape[0], bar.shape[1], 3), np.uint8)])
+            np.vstack([bar, bg_block(tabs_px - bar.shape[0], bar.shape[1], scale, bar.shape[0])])
     return np.vstack([bar, body])
 
 
