@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
@@ -109,6 +110,25 @@ def symbol_of(asset: str) -> Optional[str]:
     return None
 
 
+def _get_json(url: str, timeout: float) -> dict:
+    """GET com o Python; se faltar o certificado (Python do python.org no Mac), usa o curl do sistema.
+
+    A URL vai ao curl pela entrada padrão, nunca na linha de comando (lá apareceria a chave).
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as e:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(e) or not Path("/usr/bin/curl").exists():
+            raise
+    cfg = f'url = "{url}"\nsilent\nshow-error\nmax-time = {int(timeout)}\n'
+    p = subprocess.run(["/usr/bin/curl", "-K", "-"], input=cfg, capture_output=True, text=True,
+                       timeout=timeout + 5)
+    if p.returncode != 0:
+        raise OSError(f"curl {p.returncode}: {p.stderr.strip()[:200]}")
+    return json.loads(p.stdout)
+
+
 def series(symbol: str, interval: str = "1min", outputsize: int = 30, key: Optional[str] = None,
            dados: str | Path = "dados", timeout: float = 15) -> Optional[list[tuple[int, float, float, float, float]]]:
     """Velas [(início em UTC, open, high, low, close)], da mais antiga para a mais nova.
@@ -122,8 +142,7 @@ def series(symbol: str, interval: str = "1min", outputsize: int = 30, key: Optio
     q = urllib.parse.urlencode({"symbol": symbol, "interval": interval, "outputsize": int(outputsize),
                                 "timezone": "UTC", "apikey": key, "order": "asc"})
     try:
-        with urllib.request.urlopen(f"{API}?{q}", timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data = _get_json(f"{API}?{q}", timeout)
     except Exception as e:
         print(f"twelvedata: {e!r}", flush=True)
         return None

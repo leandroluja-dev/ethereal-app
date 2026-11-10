@@ -58,3 +58,27 @@ def test_no_key_no_request(tmp_path):
     assert td.series("GBP/USD", dados=tmp_path) is None
     (tmp_path / "twelvedata.key").write_text(td.SKIP)
     assert td.load_key(tmp_path) is None and td.asked_before(tmp_path)
+
+
+def test_get_json_falls_back_to_curl_on_cert_error(monkeypatch):
+    import subprocess
+    import urllib.error
+    import urllib.request
+
+    from candlesense.feeds import twelvedata as td
+
+    def boom(*a, **k):
+        raise urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] x")
+
+    seen = {}
+
+    def fake_run(cmd, input, **k):
+        seen["cmd"], seen["input"] = cmd, input
+        return subprocess.CompletedProcess(cmd, 0, '{"status": "ok", "values": []}', "")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(td.subprocess, "run", fake_run)
+    monkeypatch.setattr(td.Path, "exists", lambda self: True)
+    assert td._get_json("https://x/?apikey=SEGREDO", 5) == {"status": "ok", "values": []}
+    assert "SEGREDO" not in " ".join(seen["cmd"])
+    assert "SEGREDO" in seen["input"]
