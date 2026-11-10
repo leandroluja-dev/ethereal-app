@@ -353,6 +353,13 @@ def cmd_live(args) -> int:
     from .ui.panel import PanelExtras
 
     wallet = WalletTracker(store)
+    strong = None
+    try:  # modelo de formatos: só mede ao vivo (gráfico de 1 min), não sinaliza
+        from .engine.strong import StrongMode
+
+        strong = StrongMode(store.db)
+    except Exception as e:
+        print(f"modo medição indisponível: {e!r}", flush=True)
     extras = PanelExtras()
     wallet_view = None
     wallet_dirty = True
@@ -412,6 +419,11 @@ def cmd_live(args) -> int:
                     last_learn = time.monotonic()
             except Exception as e:  # o histórico nunca derruba a leitura
                 print(f"histórico: {e!r}", flush=True)
+            if strong is not None:
+                try:
+                    strong.update(r, asset)
+                except Exception as e:  # a medição nunca derruba a leitura
+                    print(f"medição: {e!r}", flush=True)
             from .alerts import play
 
             if dec.signal and dec.action != prev_signal:
