@@ -538,10 +538,20 @@ class ChartReader:
         assert lay.axis is not None
         for box in _colored_boxes(bgr, lay.axis)[:2]:
             toks = self._ocr_cached(self._label_cache, bgr, box)
+            # No modo Blitz o cronômetro ("00:59") gruda na etiqueta: ignora o que tem ":" e
+            # prefere o número com ponto decimal (o preço), em vez de um pedaço solto.
+            found = []
             for tk in toks:
-                p = parse_number(tk.text)
-                if p is not None:
-                    return (box.cy, p[0], p[1])
+                for part in re.sub(r"\d{1,2}\s*:\s*\d{2}", " ", tk.text).split():
+                    if ":" in part:
+                        continue
+                    p = parse_number(part)
+                    if p is not None:
+                        found.append(("." in part or "," in part, len(part), p))
+            if found:
+                found.sort(key=lambda f: (f[0], f[1]), reverse=True)
+                p = found[0][2]
+                return (box.cy, p[0], p[1])
         return None
 
     def _apply_price_label(self, reading: ChartReading, scale: PriceScale,
