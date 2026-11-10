@@ -129,3 +129,46 @@ class StrongMode:
                     hits += int((p >= 0.5) == (out == 1))
             res[th] = (hits, n)
         return res
+
+    def simulate(self, since: float = 0.0, threshold: float = 0.62, stake: float = 10.0,
+                 min_payout: int = 80) -> dict:
+        """Conta de mentira: uma entrada de ``stake`` em cada medição acima do corte.
+
+        Ganho = stake x payout lido na tela naquele minuto (86% se não foi lido);
+        perda = -stake; empate devolve o valor. Entradas com payout abaixo de
+        ``min_payout`` ficam de fora, como uma pessoa faria.
+        """
+        rows = self.db.execute(
+            "SELECT asset, p_up, out5, payout FROM forte WHERE ts>=? AND out5 IS NOT NULL ORDER BY ts",
+            (since,)).fetchall()
+        res = {"entradas": 0, "ganhos": 0, "perdas": 0, "empates": 0, "lucro": 0.0, "por_par": {}}
+        for asset, p, out, payout in rows:
+            if not (p >= threshold or p <= 1 - threshold):
+                continue
+            pay = payout if payout else 86
+            if pay < min_payout:
+                continue
+            par = res["por_par"].setdefault(asset, [0, 0])
+            res["entradas"] += 1
+            if out == -1:
+                res["empates"] += 1
+                continue
+            par[1] += 1
+            if (p >= 0.5) == (out == 1):
+                res["ganhos"] += 1
+                par[0] += 1
+                res["lucro"] += stake * pay / 100.0
+            else:
+                res["perdas"] += 1
+                res["lucro"] -= stake
+        return res
+
+    def day_text(self, since: float, threshold: float = 0.62, stake: float = 10.0) -> str:
+        """Resumo do simulador para o log e para dados/simulador.txt."""
+        s = self.simulate(since, threshold, stake)
+        n = s["ganhos"] + s["perdas"]
+        acc = f"{s['ganhos'] / n:.0%}" if n else "-"
+        pares = ", ".join(f"{a} {w}/{t}" for a, (w, t) in s["por_par"].items()) or "nenhum"
+        return (f"Simulador (só medição, R$ {stake:.0f} por entrada, corte {threshold:.0%}): "
+                f"{s['entradas']} entradas, {s['ganhos']} ganhos, {s['perdas']} perdas, {s['empates']} empates, "
+                f"acerto {acc}, resultado R$ {s['lucro']:+.2f}. Por par: {pares}.")

@@ -354,6 +354,7 @@ def cmd_live(args) -> int:
 
     wallet = WalletTracker(store)
     strong = None
+    last_sim = time.monotonic()
     try:  # modelo de formatos: só mede ao vivo (gráfico de 1 min), não sinaliza
         from .engine.strong import StrongMode
 
@@ -422,6 +423,13 @@ def cmd_live(args) -> int:
             if strong is not None:
                 try:
                     strong.update(r, asset)
+                    if time.monotonic() - last_sim > 600:  # resumo do simulador a cada 10 min
+                        last_sim = time.monotonic()
+                        from .history.wallet import day_start
+
+                        txt = strong.day_text(day_start())
+                        print(txt, flush=True)
+                        (Path(args.dados) / "simulador.txt").write_text(txt + "\n")
                 except Exception as e:  # a medição nunca derruba a leitura
                     print(f"medição: {e!r}", flush=True)
             from .alerts import play

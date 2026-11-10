@@ -89,3 +89,19 @@ def test_strong_mode_ignores_uncertain_otc_and_other_timeframes():
         assert sm.update(_reading(i), "EUR/USD (OTC)", now=now) is None
     assert db.execute("SELECT COUNT(*) FROM forte").fetchone()[0] == 0
     assert db.execute("SELECT COUNT(*) FROM fita WHERE asset='EUR/USD'").fetchone()[0] == 0
+
+
+def test_simulator_counts_virtual_entries():
+    db = sqlite3.connect(":memory:")
+    sm = StrongMode(db, log=lambda *a, **k: None)
+    rows = [("EUR/USD", 0, 1.0, 0.70, 1.1, 86, 1),   # compra certa: +8,60
+            ("EUR/USD", 60, 1.0, 0.30, 1.1, 86, 1),  # venda errada: -10
+            ("EUR/USD", 120, 1.0, 0.55, 1.1, 86, 0),  # abaixo do corte: fora
+            ("GBP/USD", 180, 1.0, 0.25, 1.1, 90, 0),  # venda certa: +9
+            ("GBP/USD", 240, 1.0, 0.80, 1.1, 70, 0),  # payout baixo: fora
+            ("GBP/USD", 300, 1.0, 0.80, 1.1, None, -1)]  # empate
+    db.executemany("INSERT INTO forte VALUES (?,?,?,?,?,?,?)", rows)
+    s = sm.simulate(threshold=0.62, stake=10)
+    assert (s["entradas"], s["ganhos"], s["perdas"], s["empates"]) == (4, 2, 1, 1)
+    assert abs(s["lucro"] - (8.6 - 10 + 9)) < 1e-9
+    assert "R$ +7.60" in sm.day_text(0)
