@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CandleSense</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -431,7 +433,7 @@ button { font: inherit; color: inherit; }
   function renderTimeline(s) {
     const board = $("board"), ticks = $("ticks");
     const groups = s.entries.slice(-8);
-    const now = s.now;
+    const now = (s.live && s.live.cloud) ? Date.now() / 1000 : s.now;
     const tEnd = now + 120;
     let tStart = groups.length ? Math.min(groups[0].ts - 120, tEnd - 1200) : tEnd - 1800;
     tStart = Math.max(tStart, tEnd - 3 * 3600);
@@ -562,7 +564,10 @@ button { font: inherit; color: inherit; }
       list = null;
       if (dayLoading !== selDay) {
         dayLoading = selDay;
-        fetch("api/day?d=" + selDay, { cache: "no-store" }).then(r => r.json()).then(j => { dayCache[j.day || selDay] = j.entries || []; dayLoading = null; render(); })
+        const want = selDay;
+        fetch("api/day?d=" + want, { cache: "no-store" }).then(r => { if (!r.ok) throw 0; return r.json(); })
+          .catch(() => fetch("api/dias/" + want + ".json", { cache: "no-store" }).then(r => r.ok ? r.json() : { day: want, entries: [] }))
+          .then(j => { dayCache[j.day || selDay] = j.entries || []; dayLoading = null; render(); })
           .catch(() => { dayLoading = null; });
       }
     }
@@ -597,8 +602,9 @@ button { font: inherit; color: inherit; }
     $("hms").textContent = now.toLocaleTimeString("pt-BR");
     const stale = s.stale || (!s.demo && !L.ok);
     const oa = $("onair"); oa.classList.toggle("off", !!stale);
-    oa.lastChild.textContent = s.demo ? "EXEMPLO" : s.stale ? "PAROU DE LER" : L.lite ? "MODO LEVE" : L.ok ? "AO VIVO" : "LEITURA INCERTA";
-    $("age").textContent = s.stale ? `última leitura há ${s.stale} s` : !s.asset ? "" : L.lite ? `${s.asset} · velas do Twelve, 1 vez por minuto` : `${s.asset} · lendo a tela da IQ`;
+    if (L.cloud) oa.classList.toggle("off", Date.now() / 1000 - s.now > 40 * 60);
+    oa.lastChild.textContent = s.demo ? "EXEMPLO" : L.cloud ? "NUVEM" : s.stale ? "PAROU DE LER" : L.lite ? "MODO LEVE" : L.ok ? "AO VIVO" : "LEITURA INCERTA";
+    $("age").textContent = L.cloud ? `${s.asset} · atualizado às ${hhmm(s.now)} · confere a cada 15 min` : s.stale ? `última leitura há ${s.stale} s` : !s.asset ? "" : L.lite ? `${s.asset} · velas do Twelve, 1 vez por minuto` : `${s.asset} · lendo a tela da IQ`;
     const dec = L.decimals || 5, ticks = L.ticks || [];
     const pe = $("price");
     if (L.price != null) {

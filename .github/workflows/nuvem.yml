@@ -1,0 +1,72 @@
+# Simulador na nuvem: roda sem o Mac, só com as velas do Twelve Data (ver candlesense/cloud.py).
+# Precisa do segredo TWELVEDATA_KEY (Settings > Secrets and variables > Actions) e do
+# GitHub Pages com a origem "GitHub Actions" (Settings > Pages).
+name: nuvem
+
+on:
+  schedule:
+    - cron: "*/15 * * * 1-5"   # a cada 15 min, de segunda a sexta (UTC)
+    - cron: "*/15 0-1 * * 6"   # sexta à noite no Brasil já é sábado em UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: nuvem
+  cancel-in-progress: false
+
+jobs:
+  rodar:
+    runs-on: ubuntu-latest
+    # sem o segredo ainda: a rodada não faz nada (e não fica mandando e-mail de erro)
+    if: ${{ vars.NUVEM_DESLIGADA != '1' }}
+    env:
+      HAS_KEY: ${{ secrets.TWELVEDATA_KEY != '' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.HAS_KEY == 'true'
+      - name: Banco da rodada anterior (branch nuvem)
+        if: env.HAS_KEY == 'true'
+        run: |
+          mkdir saida
+          if git ls-remote --exit-code origin nuvem >/dev/null; then
+            git fetch --depth 1 origin nuvem
+            git archive FETCH_HEAD | tar -x -C saida
+          fi
+      - uses: actions/setup-python@v5
+        if: env.HAS_KEY == 'true'
+        with:
+          python-version: "3.12"
+      - run: pip install numpy pillow opencv-python-headless
+        if: env.HAS_KEY == 'true'
+      - name: Rodar o simulador
+        if: env.HAS_KEY == 'true'
+        env:
+          TWELVEDATA_KEY: ${{ secrets.TWELVEDATA_KEY }}
+          TZ: America/Sao_Paulo
+        run: python -m candlesense.cloud saida
+      - name: Guardar o banco na branch nuvem
+        if: env.HAS_KEY == 'true'
+        run: |
+          cd saida
+          # um commit só, sempre substituído: a branch não cresce a cada 15 min
+          git init -q -b nuvem
+          git config user.name "candlesense-nuvem"
+          git config user.email "candlesense-nuvem@users.noreply.github.com"
+          git add -A
+          git commit -q -m "nuvem $(date -u +%FT%TZ)" || true
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:nuvem
+      - uses: actions/upload-pages-artifact@v3
+        if: env.HAS_KEY == 'true'
+        with:
+          path: saida
+      - id: deploy
+        if: env.HAS_KEY == 'true'
+        continue-on-error: true  # Pages ainda não ligado: só não publica
+        uses: actions/deploy-pages@v4
