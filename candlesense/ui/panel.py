@@ -1,61 +1,78 @@
-"""Painel do CandleSense: uma janela pequena, sempre por cima, com a decisão.
+"""Painel do CandleSense: uma janela só, sempre por cima, no estilo de app de corretora.
 
-Desenhado com Pillow (acentos e fontes do sistema) e mostrado pelo OpenCV,
-que já é usado na janela de debug. A mesma função gera a imagem para testes
-e para o modo ``debug`` com capturas salvas.
+Fundo preto, cartões cinza-escuro arredondados, preço grande, gráfico em linha,
+cartão do sinal com medidor e as duas pílulas Compra / Venda com a porcentagem.
+
+Desenhado com Pillow (fonte Inter, que vem junto com o app) e mostrado pelo
+OpenCV. Tudo é desenhado no dobro do tamanho e reduzido no fim, para as curvas
+ficarem lisas. A mesma função gera a imagem para testes e para o modo debug.
 """
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from ..engine.rules import COMPRA, INCERTA, NAO_ENTRAR, VENDA, Decision
-from ..models import ChartReading
+from ..models import ChartReading, fmt_duration
 
-W = 440
-PAD = 14
+# ---------------------------------------------------------------------------
+# Tokens de design (unidades do painel; a escala multiplica tudo)
+# ---------------------------------------------------------------------------
+W = 380          # largura do painel
+PAD = 16         # margem lateral
+GAP = 12         # espaço entre blocos
+R_CARD = 18      # raio dos cartões
+SS = 2           # superamostragem (desenha 2x e reduz)
 
-BG = (24, 26, 31)
-FG = (232, 234, 238)
-DIM = (150, 156, 166)
-LINE = (52, 56, 64)
-GREEN = (46, 170, 98)
-RED = (222, 76, 64)
-GREY = (88, 94, 104)
-ORANGE = (214, 140, 40)
+BG = (0, 0, 0)
+CARD = (28, 28, 30)
+CARD_2 = (44, 44, 47)       # pílulas e trilhos dentro de cartões
+CARD_3 = (66, 66, 70)       # pílula selecionada
+FG = (245, 245, 247)
+DIM = (152, 152, 158)
+FAINT = (92, 92, 97)
+LINE = (52, 52, 56)
+GREEN = (60, 196, 142)      # verde menta da referência
+RED = (240, 84, 84)
+ORANGE = (245, 160, 60)
+GREY = (120, 120, 126)
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
 
-HEAD_COLOR = {COMPRA: GREEN, VENDA: RED, NAO_ENTRAR: GREY, INCERTA: ORANGE}
+HEAD_COLOR = {COMPRA: GREEN, VENDA: RED, NAO_ENTRAR: FG, INCERTA: ORANGE}
 
-_FONTS = {
-    False: [
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-    ],
-    True: [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "C:/Windows/Fonts/arialbd.ttf",
-    ],
+_FONT_DIR = Path(__file__).with_name("fonts")
+_WEIGHTS = {"regular": "Inter-Regular.otf", "medium": "Inter-Medium.otf",
+            "semibold": "Inter-SemiBold.otf", "bold": "Inter-Bold.otf"}
+_FALLBACK = {
+    False: ["/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/arial.ttf"],
+    True: ["/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/Library/Fonts/Arial Bold.ttf",
+           "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "C:/Windows/Fonts/arialbd.ttf"],
 }
 
 
-@lru_cache(maxsize=32)
-def _font(size: int, bold: bool = False):
-    for path in _FONTS[bold]:
-        if os.path.exists(path):
+@lru_cache(maxsize=64)
+def _font(size: int, bold=False):
+    """Fonte Inter. ``bold`` aceita True/False ou o peso: regular, medium, semibold, bold."""
+    weight = bold if isinstance(bold, str) else ("bold" if bold else "regular")
+    path = _FONT_DIR / _WEIGHTS.get(weight, _WEIGHTS["regular"])
+    try:
+        return ImageFont.truetype(str(path), max(1, size))
+    except OSError:
+        pass
+    for p in _FALLBACK[weight in ("semibold", "bold")]:
+        if os.path.exists(p):
             try:
-                return ImageFont.truetype(path, size, index=1 if bold and path.endswith(".ttc") else 0)
+                return ImageFont.truetype(p, max(1, size))
             except OSError:
                 continue
     try:
@@ -68,8 +85,17 @@ def _pct(p: float) -> str:
     return f"{p * 100:.1f}%".replace(".", ",")
 
 
+def _pct0(p: float) -> str:
+    return f"{p * 100:.0f}%"
+
+
 def _mmss(s: int) -> str:
     return f"{s // 60:02d}:{s % 60:02d}"
+
+
+def _money(v: float) -> str:
+    sign = "+" if v > 0 else "-" if v < 0 else ""
+    return f"{sign}${abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
@@ -88,22 +114,42 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
 
 
 class _Canvas:
+    """Folha de desenho. Coordenadas em unidades do painel; ``y`` corre em pixels internos."""
+
     def __init__(self, scale: float, height: int = 1400) -> None:
-        self.s = scale
-        self.w = int(W * scale)
-        self.img = Image.new("RGB", (self.w, int(height * scale)), BG)
+        self.out_scale = scale
+        self.s = scale * SS
+        self.w = int(round(W * self.s))
+        self.img = Image.new("RGB", (self.w, int(height * self.s)), BG)
         self.d = ImageDraw.Draw(self.img)
         self.y = 0
 
+    # medidas
     def px(self, v: float) -> int:
         return int(round(v * self.s))
 
-    def text(self, x: float, txt: str, size: int, color=FG, bold: bool = False, dy: float = 0) -> None:
-        self.d.text((self.px(x), self.y + self.px(dy)), txt, font=_font(self.px(size), bold), fill=color)
+    @property
+    def u(self) -> float:
+        """y atual em unidades do painel."""
+        return self.y / self.s
 
-    def para(self, txt: str, size: int, color=FG, x: float = PAD, width: Optional[float] = None,
-             bold: bool = False, gap: float = 3) -> None:
-        f = _font(self.px(size), bold)
+    def font(self, size: float, bold=False):
+        return _font(self.px(size), bold)
+
+    def tw(self, txt: str, size: float, bold=False) -> float:
+        """Largura do texto em unidades do painel."""
+        return self.d.textlength(txt, font=self.font(size, bold)) / self.s
+
+    # texto
+    def text(self, x: float, txt: str, size: float, color=FG, bold=False, dy: float = 0) -> None:
+        self.d.text((self.px(x), self.y + self.px(dy)), txt, font=self.font(size, bold), fill=color)
+
+    def at(self, x: float, y: float, txt: str, size: float, color=FG, bold=False, anchor: str = "la") -> None:
+        self.d.text((self.px(x), self.px(y)), txt, font=self.font(size, bold), fill=color, anchor=anchor)
+
+    def para(self, txt: str, size: float, color=FG, x: float = PAD, width: Optional[float] = None,
+             bold=False, gap: float = 4) -> None:
+        f = self.font(size, bold)
         width = width if width is not None else W - x - PAD
         for ln in _wrap(self.d, txt, f, self.px(width)):
             self.d.text((self.px(x), self.y), ln, font=f, fill=color)
@@ -113,12 +159,24 @@ class _Canvas:
         self.y += self.px(v)
 
     def rule(self) -> None:
-        self.space(6)
-        self.d.line([(self.px(PAD), self.y), (self.w - self.px(PAD), self.y)], fill=LINE, width=max(1, self.px(1)))
         self.space(8)
+        self.d.line([(self.px(PAD), self.y), (self.w - self.px(PAD), self.y)], fill=LINE, width=self.px(1))
+        self.space(10)
+
+    # formas
+    def rrect(self, x1, y1, x2, y2, r, fill=None, outline=None, width: float = 1) -> None:
+        self.d.rounded_rectangle([self.px(x1), self.px(y1), self.px(x2), self.px(y2)], radius=self.px(r),
+                                 fill=fill, outline=outline, width=self.px(width) if outline else 0)
+
+    def card(self, y1: float, y2: float, fill=CARD) -> None:
+        self.rrect(PAD, y1, W - PAD, y2, R_CARD, fill=fill)
 
     def crop(self) -> np.ndarray:
-        img = self.img.crop((0, 0, self.w, self.y + self.px(PAD)))
+        h = self.y + self.px(PAD)
+        img = self.img.crop((0, 0, self.w, h))
+        out_w = int(round(W * self.out_scale))
+        out_h = max(1, int(round(h / SS)))
+        img = img.resize((out_w, out_h), Image.BOX)
         return np.asarray(img)[:, :, ::-1].copy()  # RGB -> BGR (OpenCV)
 
 
@@ -128,28 +186,21 @@ class PanelExtras:
 
     wallet_line: Optional[str] = None
     wallet_profit: Optional[float] = None
+    wallet_account: Optional[str] = None   # "real" | "treino"
+    wallet_n: Optional[int] = None         # entradas hoje
+    wallet_wins: Optional[int] = None
+    wallet_losses: Optional[int] = None
     open_line: Optional[str] = None
     exit_alert: Optional[str] = None
     details: bool = False       # explicação dos módulos (tecla d)
-    chart: bool = True          # mini gráfico ao vivo
+    chart: bool = True          # gráfico ao vivo
     buttons: bool = True        # botão Carteira no topo
 
 
-# Botões desenhados no próprio painel (a janela do OpenCV não tem barra de título no modo app).
-# (x1, y1, x2, y2) em unidades do painel, antes da escala.
+# Botões desenhados no próprio painel. (x1, y1, x2, y2) em unidades do painel, antes da escala.
 BUTTONS = {
-    "carteira": (W - PAD - 86, 8, W - PAD, 38),
+    "carteira": (W - PAD - 92, 16, W - PAD, 48),
 }
-
-
-def _buttons(c: "_Canvas") -> None:
-    white = (255, 255, 255)
-    x1, y1, x2, y2 = BUTTONS["carteira"]
-    c.d.rounded_rectangle([c.px(x1), c.px(y1), c.px(x2), c.px(y2)], radius=c.px(6),
-                          outline=white, width=max(1, c.px(2)))
-    f = _font(c.px(13), True)
-    tw = c.d.textlength("Carteira", font=f)
-    c.d.text((c.px((x1 + x2) / 2) - tw / 2, c.px(y1 + 7)), "Carteira", font=f, fill=white)
 
 
 def hit_button(x: float, y: float, scale: float = 1.0) -> Optional[str]:
@@ -161,203 +212,448 @@ def hit_button(x: float, y: float, scale: float = 1.0) -> Optional[str]:
     return None
 
 
-def _mini_chart(c: "_Canvas", reading: ChartReading, n: int = 36, h: float = 92) -> None:
-    """As velas que o app está lendo, redesenhadas: confira se batem com a IQ Option."""
-    cs = [k for k in (reading.candles or []) if k.high is not None and k.low is not None][-n:]
-    if len(cs) < 3:
+# ---------------------------------------------------------------------------
+# Ícones simples (linhas finas, como os da referência)
+# ---------------------------------------------------------------------------
+
+def _icon(c: _Canvas, kind: str, x: float, y: float, color=DIM, size: float = 14) -> None:
+    """Ícone de ``size`` unidades com canto em (x, y)."""
+    px, s = c.px, size
+    lw = max(1, px(1.6))
+    if kind in ("up", "down"):
+        if kind == "up":
+            pts = [(x + s / 2, y + 2), (x + s - 1, y + s - 3), (x + 1, y + s - 3)]
+        else:
+            pts = [(x + 1, y + 3), (x + s - 1, y + 3), (x + s / 2, y + s - 2)]
+        c.d.polygon([(px(a), px(b)) for a, b in pts], fill=color)
+    elif kind == "clock":
+        c.d.ellipse([px(x + 1), px(y + 1), px(x + s - 1), px(y + s - 1)], outline=color, width=lw)
+        cx, cy = x + s / 2, y + s / 2
+        c.d.line([(px(cx), px(cy)), (px(cx), px(y + 4))], fill=color, width=lw)
+        c.d.line([(px(cx), px(cy)), (px(cx + 3), px(cy + 2))], fill=color, width=lw)
+    elif kind == "target":
+        c.d.ellipse([px(x + 1), px(y + 1), px(x + s - 1), px(y + s - 1)], outline=color, width=lw)
+        c.d.ellipse([px(x + 5), px(y + 5), px(x + s - 5), px(y + s - 5)], fill=color)
+    elif kind == "bars":
+        for i, h in enumerate((5, 9, 13)):
+            bx = x + 1 + i * 4.5
+            c.d.rectangle([px(bx), px(y + s - h), px(bx + 2.6), px(y + s - 1)], fill=color)
+    elif kind == "dot":
+        c.d.ellipse([px(x + 3), px(y + 3), px(x + s - 3), px(y + s - 3)], fill=color)
+
+
+def _icon_line(c: _Canvas, kind: str, txt: str, color=FG, icolor=DIM, size: float = 14, x: float = PAD + 18,
+               width: Optional[float] = None) -> None:
+    """Linha com ícone à esquerda e texto (quebra se precisar)."""
+    _icon(c, kind, x, c.u + 2, icolor, 14)
+    width = width if width is not None else W - PAD - 18 - (x + 24)
+    c.para(txt, size, color, x=x + 24, width=width, gap=6)
+
+
+# ---------------------------------------------------------------------------
+# Blocos
+# ---------------------------------------------------------------------------
+
+def draw_button(c: _Canvas, label: str = "Carteira") -> None:
+    """Pílula do canto de cima (Carteira no painel, Voltar na carteira)."""
+    x1, y1, x2, y2 = BUTTONS["carteira"]
+    c.rrect(x1, y1, x2, y2, (y2 - y1) / 2, fill=CARD_2)
+    c.at((x1 + x2) / 2, (y1 + y2) / 2, label, 13, FG, "medium", anchor="mm")
+
+
+def _header(c: _Canvas, reading: Optional[ChartReading], ex: PanelExtras) -> None:
+    asset = None
+    if reading is not None:
+        asset = reading.asset or (reading.layout.asset if reading.layout is not None else None)
+    title = asset or "CandleSense"
+    room = (BUTTONS["carteira"][0] - PAD - 10) if ex.buttons else W - 2 * PAD
+    size = 19
+    while size > 13 and c.tw(title, size, "semibold") > room:
+        size -= 1
+    c.at(PAD, 16, title, size, FG, "semibold")
+    sub = []
+    if reading is not None and reading.timeframe_s:
+        sub.append(f"vela de {fmt_duration(reading.timeframe_s)}")
+    if reading is not None and reading.payout_pct:
+        sub.append(f"payout {reading.payout_pct}%")
+    c.at(PAD, 41, " · ".join(sub) if sub else "lendo a IQ Option", 13, DIM)
+    if ex.buttons:
+        draw_button(c)
+    c.y = c.px(66)
+
+
+def _exit_alert(c: _Canvas, text: str) -> None:
+    y0 = c.u
+    f = c.font(13)
+    lines = _wrap(c.d, text, f, c.px(W - 2 * PAD - 36))
+    h = 46 + 19 * len(lines)
+    c.rrect(PAD, y0, W - PAD, y0 + h, R_CARD, fill=(120, 24, 28))
+    c.at(PAD + 18, y0 + 14, "SAIR AGORA?", 16, WHITE, "bold")
+    for i, ln in enumerate(lines):
+        c.at(PAD + 18, y0 + 38 + i * 19, ln, 13, (255, 220, 220))
+    c.y = c.px(y0 + h + GAP)
+
+
+def _price(c: _Canvas, reading: ChartReading, cs: list) -> None:
+    """Preço grande, com os dois últimos dígitos menores (como na IQ e na referência)."""
+    y0 = c.u
+    p = reading.current_price
+    dec = reading.scale.decimals if reading.scale else 5
+    if p is None:
+        c.at(PAD, y0, "—", 40, FG, "bold")
+        c.y = c.px(y0 + 52)
         return
-    lo = min(k.low for k in cs)
-    hi = max(k.high for k in cs)
-    if reading.current_price is not None:
-        lo, hi = min(lo, reading.current_price), max(hi, reading.current_price)
+    s = f"{p:.{dec}f}"
+    big, small = (s[:-2], s[-2:]) if dec >= 3 else (s, "")
+    c.at(PAD, y0 + 40, big, 42, FG, "bold", anchor="ls")
+    if small:
+        c.at(PAD + c.tw(big, 42, "bold") + 1, y0 + 40, small, 28, FG, "bold", anchor="ls")
+    # variação na janela mostrada
+    if len(cs) >= 2:
+        ref = cs[0].open
+        diff = p - ref
+        col = GREEN if diff > 0 else RED if diff < 0 else DIM
+        rel = diff / ref * 100 if ref else 0.0
+        a = f"{'+' if diff >= 0 else '-'}{abs(diff):.{dec}f}"
+        b = f"{abs(rel):.2f}%".replace(".", ",")
+        x = PAD
+        y = y0 + 52
+        c.at(x, y, a, 14, DIM, "medium")
+        x += c.tw(a, 14, "medium") + 7
+        _icon(c, "up" if diff >= 0 else "down", x, y + 1.5, col, 12)
+        x += 15
+        c.at(x, y, b, 14, col, "medium")
+        x += c.tw(b, 14, "medium") + 6
+        c.at(x, y, f"· últimas {len(cs)} velas", 14, DIM)
+    c.y = c.px(y0 + 80)
+
+
+def _smooth(pts: list[tuple[float, float]], steps: int = 6) -> list[tuple[float, float]]:
+    """Curva Catmull-Rom passando pelos pontos (linha macia como na referência)."""
+    if len(pts) < 3:
+        return pts
+    out = []
+    p = [pts[0]] + pts + [pts[-1]]
+    for i in range(1, len(p) - 2):
+        p0, p1, p2, p3 = p[i - 1], p[i], p[i + 1], p[i + 2]
+        for k in range(steps):
+            t = k / steps
+            t2, t3 = t * t, t * t * t
+            out.append(tuple(0.5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2
+                                    + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3) for j in (0, 1)))
+    out.append(pts[-1])
+    return out
+
+
+def _chart(c: _Canvas, reading: ChartReading, cs: list, h: float = 150) -> None:
+    """Gráfico em linha com o fechamento das velas lidas; confira se bate com a IQ Option."""
+    y0 = c.u
+    x0, x1 = PAD + 2, W - PAD - 56
+    closes = [k.close for k in cs]
+    if reading.current_price is not None and closes:
+        closes[-1] = reading.current_price
+    lo, hi = min(k.low for k in cs), max(k.high for k in cs)
+    lo, hi = min(lo, min(closes)), max(hi, max(closes))
     if hi <= lo:
+        hi = lo + 1e-9
+    top, bot = y0 + 10, y0 + h - 10
+
+    def yv(v: float) -> float:
+        return top + (hi - v) / (hi - lo) * (bot - top)
+
+    n = len(closes)
+    pts = [(x0 + (x1 - x0) * i / max(1, n - 1), yv(v)) for i, v in enumerate(closes)]
+    up = closes[-1] >= cs[0].open
+    col = GREEN if up else RED
+    dec = reading.scale.decimals if reading.scale else 5
+    # linha pontilhada no preço de abertura da janela
+    yr = yv(cs[0].open)
+    xx = x0
+    while xx < x1:
+        c.d.ellipse([c.px(xx), c.px(yr) - c.px(0.8), c.px(xx) + c.px(1.6), c.px(yr) + c.px(0.8)], fill=FAINT)
+        xx += 5
+    # máxima e mínima à direita
+    c.at(W - PAD, top - 2, f"{hi:.{dec}f}", 12, DIM, anchor="ra")
+    c.at(W - PAD, bot + 2, f"{lo:.{dec}f}", 12, DIM, anchor="rs")
+    # linha
+    curve = [(c.px(a), c.px(b)) for a, b in _smooth(pts)]
+    c.d.line(curve, fill=col, width=c.px(2.4), joint="curve")
+    # ponto atual com halo
+    ex_, ey = pts[-1]
+    r1, r2 = 7, 3.6
+    halo = tuple(int(v * 0.35) for v in col)
+    c.d.ellipse([c.px(ex_ - r1), c.px(ey - r1), c.px(ex_ + r1), c.px(ey + r1)], fill=halo)
+    c.d.ellipse([c.px(ex_ - r2), c.px(ey - r2), c.px(ex_ + r2), c.px(ey + r2)], fill=col)
+    c.y = c.px(y0 + h + 4)
+
+
+def _chart_empty(c: _Canvas, msg: str, h: float = 150) -> None:
+    y0 = c.u
+    c.rrect(PAD, y0 + 8, W - PAD, y0 + h - 8, R_CARD, outline=LINE, width=1)
+    c.at(W / 2, y0 + h / 2, msg, 13, DIM, anchor="mm")
+    c.y = c.px(y0 + h + 4)
+
+
+def _expiry_tabs(c: _Canvas, d: Decision) -> None:
+    """Pílulas das expirações (como 1D 1W 1M da referência); a sugerida fica acesa."""
+    if not d.horizons:
         return
-    x0, x1 = PAD, W - PAD - 58
-    top = c.y / c.s
-    step = (x1 - x0) / n
-    bw = max(2.0, step * 0.62)
-
-    def ypx(v: float) -> int:
-        return c.px(top + 4 + (hi - v) / (hi - lo) * (h - 8))
-
-    c.d.rectangle([c.px(x0), c.px(top), c.px(W - PAD), c.px(top + h)], fill=(30, 33, 39))
-    for i, k in enumerate(cs):
-        cx = x0 + (n - len(cs) + i + 0.5) * step
-        up = k.close >= k.open
-        col = GREEN if up else RED
-        c.d.line([(c.px(cx), ypx(k.high)), (c.px(cx), ypx(k.low))], fill=col, width=max(1, c.px(1)))
-        y_a, y_b = sorted((ypx(k.open), ypx(k.close)))
-        c.d.rectangle([c.px(cx - bw / 2), y_a, c.px(cx + bw / 2), max(y_b, y_a + 1)],
-                      fill=col if not k.forming else None, outline=col)
-    if reading.current_price is not None:
-        y = ypx(reading.current_price)
-        c.d.line([(c.px(x0), y), (c.px(x1 + 4), y)], fill=(200, 200, 210), width=1)
-        dec = reading.scale.decimals if reading.scale else 5
-        c.d.text((c.px(x1 + 8), y - c.px(7)), f"{reading.current_price:.{dec}f}",
-                 font=_font(c.px(11)), fill=FG)
-    c.y = c.px(top + h + 4)
-    c.text(PAD, "Leitura ao vivo das velas (confira se bate com a IQ Option)", 11, DIM)
-    c.space(16)
+    y0 = c.u
+    h = 40
+    c.rrect(PAD, y0, W - PAD, y0 + h, h / 2, fill=CARD)
+    n = len(d.horizons)
+    cw = (W - 2 * PAD - 8) / n
+    for i, hz in enumerate(d.horizons):
+        x = PAD + 4 + i * cw
+        sel = d.best is not None and hz.candles == d.best.candles and d.action != INCERTA
+        if sel:
+            c.rrect(x, y0 + 4, x + cw, y0 + h - 4, (h - 8) / 2, fill=CARD_3)
+        lab = fmt_duration(hz.candles * d.timeframe_s).replace(" ", "") if d.timeframe_s else f"{hz.candles}v"
+        c.at(x + cw / 2, y0 + h / 2, lab, 14, FG if sel else DIM, "semibold" if sel else "medium", anchor="mm")
+    c.y = c.px(y0 + h + GAP)
 
 
-def _gauge(c: "_Canvas", d: Decision) -> None:
-    import math
-
-    st = d.strength or 0.0
-    r = 70
-    cx, cy = PAD + r + 6, c.y / c.s + r + 6  # em unidades do painel
+def _gauge(c: _Canvas, cx: float, cy: float, r: float, st: Optional[float]) -> None:
+    """Medidor semicircular: vermelho (venda) · cinza · verde (compra), com ponteiro."""
     box = [c.px(cx - r), c.px(cy - r), c.px(cx + r), c.px(cy + r)]
-    # Cinco faixas de 180° a 0° (esquerda = venda, direita = compra)
-    segs = [(180, 144, RED), (144, 112, (150, 70, 64)), (112, 68, GREY), (68, 36, (60, 130, 90)), (36, 0, GREEN)]
+    wd = c.px(5)
+    active = st is not None
+    segs = [(180, 128, RED), (120, 60, GREY), (52, 0, GREEN)]
     for a0, a1, col in segs:
-        # PIL mede o ângulo no sentido horário a partir das 3h: 180..360 é a metade de cima
-        c.d.arc(box, start=360 - a0, end=360 - a1, fill=col, width=max(2, c.px(12)))
-    ang = math.radians(90 - 90 * st)  # st=-1 -> 180°, st=+1 -> 0°
-    nx, ny = cx + (r - 18) * math.cos(ang), cy - (r - 18) * math.sin(ang)
-    c.d.line([(c.px(cx), c.px(cy)), (c.px(nx), c.px(ny))], fill=FG, width=max(2, c.px(4)))
-    c.d.ellipse([c.px(cx - 6), c.px(cy - 6), c.px(cx + 6), c.px(cy + 6)], fill=FG)
-    # Texto à direita do medidor
-    tx = cx + r + 22
-    y0 = c.y
-    label = d.strength_label
-    col = GREEN if st > 0.2 else RED if st < -0.2 else FG
-    c.y = y0 + c.px(8)
-    c.text(tx, "Força agora", 13, DIM)
-    c.y = y0 + c.px(26)
-    c.text(tx, label, 24, col, bold=True)
-    c.y = y0 + c.px(60)
-    lado = "alta" if d.best.p_up >= 0.5 else "baixa"
-    c.text(tx, f"{_pct(d.best.prob)} de {lado} em {d.expiry_text()}", 14, FG)
-    c.y = y0 + c.px(80)
-    if d.threshold is not None:
-        c.text(tx, f"forte a partir de {_pct(d.threshold)}", 12, DIM)
-    c.y = y0 + c.px(r + 22)
-    c.rule()
+        if not active:
+            col = LINE
+        c.d.arc(box, start=360 - a0, end=360 - a1, fill=col, width=wd)
+    # marquinha no topo
+    c.d.line([(c.px(cx), c.px(cy - r - 4)), (c.px(cx), c.px(cy - r + 7))], fill=DIM if active else LINE, width=c.px(2))
+    if active:
+        ang = math.radians(90 - 90 * st)
+        L = r - 9
+        nx, ny = cx + L * math.cos(ang), cy - L * math.sin(ang)
+        # ponteiro em forma de gota
+        px_, py_ = -math.sin(ang), -math.cos(ang)
+        base = 3.2
+        poly = [(cx + px_ * base, cy + py_ * base), (nx, ny), (cx - px_ * base, cy - py_ * base)]
+        c.d.polygon([(c.px(a), c.px(b)) for a, b in poly], fill=FG)
+        c.d.ellipse([c.px(cx - 4), c.px(cy - 4), c.px(cx + 4), c.px(cy + 4)], fill=FG)
+
+
+def _signal_card(c: _Canvas, d: Decision, reading: Optional[ChartReading]) -> None:
+    """Cartão principal, como o "Strong Buy" da referência."""
+    y0 = c.u
+    inner = PAD + 18
+    # mede o conteúdo numa folha de rascunho para saber a altura do cartão
+    lines: list[tuple[str, str, tuple, tuple]] = []  # (ícone, texto, cor do texto, cor do ícone)
+    if d.action == INCERTA:
+        title, tcol = "Leitura incerta", ORANGE
+        why = d.reasons[0] if d.reasons else "a leitura da tela não fechou"
+        lines.append(("dot", why, FG, ORANGE))
+        lines.append(("clock", "Sem sinal até a leitura voltar ao normal", DIM, DIM))
+        button, bfill, btxt = "Aguarde a leitura", CARD_2, FG
+    else:
+        st = d.strength or 0.0
+        label = d.strength_label
+        title = label if label != "—" else "Neutro"
+        tcol = GREEN if st > 0.2 else RED if st < -0.2 else FG
+        if d.best is not None:
+            lado = "alta" if d.best.p_up >= 0.5 else "baixa"
+            lines.append(("up" if lado == "alta" else "down",
+                          f"{_pct(d.best.prob)} de chance de {lado} em {d.expiry_text()}",
+                          FG, GREEN if lado == "alta" else RED))
+        if d.seconds_to_enter is not None:
+            fase = f" · {d.phase} da vela" if d.phase else ""
+            lines.append(("clock", f"Entre em até {_mmss(d.seconds_to_enter)}{fase}", FG, DIM))
+        if d.threshold is not None:
+            be = f" · empate {_pct(d.breakeven)}" if d.breakeven is not None else ""
+            lines.append(("target", f"Mínimo para entrar: {_pct(d.threshold)}{be}", DIM, DIM))
+        if d.expiry_hint:
+            lines.append(("bars", d.expiry_hint, ORANGE if "sugerida é" in d.expiry_hint else DIM, DIM))
+        if d.signal:
+            side = "COMPRA" if d.action == COMPRA else "VENDA"
+            button = f"ENTRAR AGORA · {side} {d.expiry_text()}"
+            bfill, btxt = (GREEN if d.action == COMPRA else RED), (BLACK if d.action == COMPRA else WHITE)
+        else:
+            motivo = d.reasons[0] if d.reasons else "sem vantagem agora"
+            button, bfill, btxt = f"Aguarde: {motivo}", CARD_2, FG
+
+    # altura do texto
+    text_w = W - PAD - 18 - (inner + 24)
+    f = c.font(14)
+    hl = sum(len(_wrap(c.d, t, f, c.px(text_w))) for _, t, _, _ in lines)
+    bf = c.font(14, "semibold")
+    blines = _wrap(c.d, button, bf, c.px(W - 2 * inner - 24))[:2]
+    bh = 22 + 19 * len(blines)
+    h = 18 + 40 + 14 + hl * 20 + 6 + bh + 18
+    c.card(y0, y0 + h)
+
+    # título grande + porcentagem de força
+    tsize = 30
+    room = W - PAD - 18 - 86 - inner
+    while tsize > 20 and c.tw(title, tsize, "bold") > room:
+        tsize -= 2
+    c.at(inner, y0 + 18 + 36, title, tsize, tcol, "bold", anchor="ls")
+    _gauge(c, W - PAD - 18 - 34, y0 + 18 + 36, 30, None if d.action == INCERTA else d.strength)
+    c.y = c.px(y0 + 18 + 40 + 14)
+    for kind, t, col, icol in lines:
+        _icon_line(c, kind, t, col, icol, 14, x=inner, width=text_w)
+    c.space(6)
+    by = c.u
+    c.rrect(inner, by, W - inner, by + bh, bh / 2 if len(blines) == 1 else 16, fill=bfill)
+    for i, ln in enumerate(blines):
+        c.at(W / 2, by + 11 + 19 * i + 9, ln, 14, btxt, "semibold", anchor="mm")
+    c.y = c.px(y0 + h + GAP)
+
+
+def _side_pills(c: _Canvas, d: Decision) -> None:
+    """Compra x Venda em %, como os botões Buy / Sell da referência (aqui só mostram, nunca clicam)."""
+    if d.best is None or d.action == INCERTA:
+        return
+    y0 = c.u
+    h = 50
+    gap = 10
+    pw = (W - 2 * PAD - gap) / 2
+    p_up = d.best.p_up
+    for i, (name, p, col) in enumerate((("Compra", p_up, GREEN), ("Venda", 1 - p_up, RED))):
+        x = PAD + i * (pw + gap)
+        lit = d.signal and ((i == 0) == (d.action == COMPRA))
+        if lit:
+            fill, fg, pc = col, (BLACK if i == 0 else WHITE), (BLACK if i == 0 else WHITE)
+        else:
+            fill, fg, pc = CARD_2, FG, (col if p > 0.5 else DIM)
+        c.rrect(x, y0, x + pw, y0 + h, h / 2, fill=fill)
+        t1, t2 = name, _pct0(p)
+        w1, w2 = c.tw(t1, 16, "semibold"), c.tw(t2, 16, "bold")
+        sx = x + pw / 2 - (w1 + 8 + w2) / 2
+        c.at(sx, y0 + h / 2, t1, 16, fg, "semibold", anchor="lm")
+        c.at(sx + w1 + 8, y0 + h / 2, t2, 16, pc, "bold", anchor="lm")
+    c.y = c.px(y0 + h + GAP)
+
+
+def _ring(c: _Canvas, cx: float, cy: float, r: float, n: Optional[int], wins: int, losses: int) -> None:
+    box = [c.px(cx - r), c.px(cy - r), c.px(cx + r), c.px(cy + r)]
+    wd = c.px(5)
+    c.d.arc(box, 0, 360, fill=CARD_2, width=wd)
+    done = wins + losses
+    if done:
+        a = 360 * wins / done
+        if wins:
+            c.d.arc(box, -90, -90 + a, fill=GREEN, width=wd)
+        if losses:
+            c.d.arc(box, -90 + a, 270, fill=RED, width=wd)
+    c.at(cx, cy, str(n if n is not None else 0), 18, FG, "semibold", anchor="mm")
+
+
+def _wallet_card(c: _Canvas, ex: PanelExtras) -> None:
+    """Resumo da carteira de hoje (como o cartão "commission-free trades" da referência)."""
+    if not (ex.wallet_line or ex.open_line or ex.wallet_n is not None):
+        return
+    y0 = c.u
+    f = c.font(13)
+    tx = PAD + 18 + 56 + 14
+    tw = W - PAD - 18 - tx
+    open_lines = _wrap(c.d, ex.open_line, f, c.px(tw)) if ex.open_line else []
+    structured = ex.wallet_n is not None
+    sub = ""
+    if structured:
+        n, g, p = ex.wallet_n or 0, ex.wallet_wins or 0, ex.wallet_losses or 0
+        sub = (f"{n} entrada{'s' if n != 1 else ''} · {g} ganho{'s' if g != 1 else ''} · "
+               f"{p} perda{'s' if p != 1 else ''}")
+    sub_lines = _wrap(c.d, sub or (ex.wallet_line or ""), f, c.px(tw))
+    h = max(92, 18 + 26 + 18 * len(sub_lines) + 18 * len(open_lines) + 16)
+    c.card(y0, y0 + h)
+    _ring(c, PAD + 18 + 28, y0 + h / 2, 26, ex.wallet_n, ex.wallet_wins or 0, ex.wallet_losses or 0)
+    if structured:
+        pr = ex.wallet_profit or 0.0
+        col = GREEN if pr > 0 else RED if pr < 0 else FG
+        c.at(tx, y0 + 18, "Hoje ", 17, FG, "semibold")
+        c.at(tx + c.tw("Hoje ", 17, "semibold"), y0 + 18, _money(pr), 17, col, "semibold")
+    else:
+        c.at(tx, y0 + 18, "Carteira", 17, FG, "semibold")
+    if ex.wallet_account in ("real", "treino"):
+        lab = "REAL" if ex.wallet_account == "real" else "TREINO"
+        bc = GREEN if ex.wallet_account == "real" else ORANGE
+        bw = c.tw(lab, 11, "bold") + 16
+        c.rrect(W - PAD - 14 - bw, y0 + 14, W - PAD - 14, y0 + 34, 10, outline=bc, width=1.2)
+        c.at(W - PAD - 14 - bw / 2, y0 + 24, lab, 11, bc, "bold", anchor="mm")
+    yy = y0 + 18 + 28
+    for ln in sub_lines:
+        c.at(tx, yy, ln, 13, DIM)
+        yy += 18
+    for ln in open_lines:
+        c.at(tx, yy, ln, 13, ORANGE, "medium")
+        yy += 18
+    c.y = c.px(y0 + h + GAP)
+
+
+def _modules_card(c: _Canvas, d: Decision) -> None:
+    if not d.modules:
+        return
+    y0 = c.u
+    inner = PAD + 18
+    f = c.font(12)
+    tw = W - 2 * inner
+    rows = [(m, _wrap(c.d, m.explanation, f, c.px(tw))) for m in d.modules]
+    h = 18 + 22 + sum(24 + 17 * len(ls) + 8 for _, ls in rows) + 6
+    c.card(y0, y0 + h)
+    c.at(inner, y0 + 18, "Por que o app pensa assim", 14, FG, "semibold")
+    yy = y0 + 18 + 26
+    for m, ls in rows:
+        c.at(inner, yy, m.name, 13, FG, "medium")
+        bx, bw = inner + 150, W - inner - (inner + 150)
+        by = yy + 6
+        c.rrect(bx, by, bx + bw, by + 6, 3, fill=CARD_2)
+        mid = bx + bw / 2
+        end = mid + m.score * m.confidence * bw / 2
+        if abs(end - mid) > 0.5:
+            col = GREEN if m.score > 0 else RED
+            c.rrect(min(mid, end), by, max(mid, end), by + 6, 3, fill=col)
+        c.d.line([(c.px(mid), c.px(by - 3)), (c.px(mid), c.px(by + 9))], fill=DIM, width=c.px(1))
+        yy += 22
+        for ln in ls:
+            c.at(inner, yy, ln, 12, DIM)
+            yy += 17
+        yy += 8
+    c.y = c.px(y0 + h + GAP)
+
+
+def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading]) -> None:
+    c.space(2)
+    st = "leitura ok" if reading is None or reading.ok else "leitura incerta"
+    if reading is not None and reading.timings_ms:
+        st += f" · {sum(reading.timings_ms.values()):.0f} ms"
+    st += " · " + ("probabilidade corrigida pelo placar" if d.calibrated else "probabilidade por regras")
+    c.para(st, 11, FAINT, gap=4)
+    c.para("Só lê a tela: nunca clica e nunca opera.", 11, FAINT, gap=4)
+    c.para("Teclas: c carteira · d detalhes · g gráfico · q fechar", 11, FAINT, gap=4)
 
 
 def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0,
            extras: Optional[PanelExtras] = None) -> np.ndarray:
     """Imagem BGR do painel."""
-    c = _Canvas(scale)
     d = decision
-    ex = extras or PanelExtras(details=True, chart=False, buttons=False)
-    head = HEAD_COLOR.get(d.action, GREY)
+    ex = extras or PanelExtras(details=True, buttons=False)
+    c = _Canvas(scale, height=1700 if ex.details else 1100)
 
-    # Faixa principal
-    hh = 86
-    c.d.rectangle([0, 0, c.w, c.px(hh)], fill=head)
-    c.y = c.px(10)
-    size = 34
-    room = (BUTTONS["carteira"][0] - PAD - 8) if ex.buttons else W - 2 * PAD
-    while size > 20 and c.d.textlength(d.action, font=_font(c.px(size), True)) > c.px(room):
-        size -= 2
-    c.text(PAD, d.action, size, (255, 255, 255), bold=True, dy=(34 - size) / 2)
-    if ex.buttons:
-        _buttons(c)
-    if d.signal and d.best is not None:
-        c.text(PAD, f"{_pct(d.best.prob)}  ·  {d.expiry_text()}", 18, (255, 255, 255), dy=46)
-    elif d.action == INCERTA:
-        c.text(PAD, "não sinaliza enquanto a leitura não fecha", 16, (255, 255, 255), dy=48)
-    elif d.best is not None:
-        lado = "alta" if d.best.direction == COMPRA else "baixa"
-        c.text(PAD, f"mais provável: {lado} {_pct(d.best.prob)} em {d.expiry_text()}", 16, (255, 255, 255), dy=48)
-    c.y = c.px(hh)
-
-    # Alerta de saída: faixa vermelha logo abaixo da decisão
+    _header(c, reading, ex)
     if ex.exit_alert:
-        c.d.rectangle([0, c.y, c.w, c.y + c.px(30)], fill=(170, 30, 30))
-        c.space(6)
-        c.text(PAD, "SAIR? " + ex.exit_alert, 14, (255, 255, 255), bold=True)
-        c.space(24)
-    c.space(10)
+        _exit_alert(c, ex.exit_alert)
 
-    # Medidor de força (venda forte ... compra forte)
-    if d.strength is not None:
-        _gauge(c, d)
-
-    if ex.chart and reading is not None and reading.ok:
-        _mini_chart(c, reading)
-
-    # Carteira (deduzida do saldo da tela)
-    if ex.wallet_line or ex.open_line:
-        if ex.open_line:
-            c.para(ex.open_line, 14, ORANGE, bold=True)
-        if ex.wallet_line:
-            col = FG if not ex.wallet_profit else GREEN if ex.wallet_profit > 0 else RED
-            c.para(ex.wallet_line, 13, col)
-        c.para("c: carteira e placar  ·  d: detalhes  ·  q: fechar", 11, DIM)
-        c.rule()
-
-    # Tempo para entrar e fase da vela
-    if d.action != INCERTA:
-        left = "—" if d.seconds_to_enter is None else _mmss(d.seconds_to_enter)
-        c.text(PAD, "Clique em até", 13, DIM)
-        c.text(PAD + 150, "Fase da vela", 13, DIM)
-        c.text(PAD + 290, "Mínimo p/ sinal", 13, DIM)
-        c.space(17)
-        c.text(PAD, left, 22, FG, bold=True)
-        c.text(PAD + 150, d.phase or "—", 22, FG, bold=True)
-        c.text(PAD + 290, _pct(d.threshold) if d.threshold else "—", 22, FG, bold=True)
-        c.space(30)
-        if d.best is not None:
-            fmt = f"{{:.{d.decimals}f}}"
-            alvo = fmt.format(d.target) if d.target is not None else "—"
-            c.para(f"Expiração: {d.expiry_text()} · alvo de referência {alvo}", 14, FG)
-            c.para(f"Saída: {d.exit_mode}", 14, FG)
-            if d.expiry_hint:
-                c.para(d.expiry_hint, 13, ORANGE if "sugerida é" in d.expiry_hint else DIM)
-        c.rule()
-
-        # Probabilidade por expiração
-        if d.horizons:
-            c.text(PAD, "Probabilidade de alta por expiração", 13, DIM)
-            c.space(19)
-            cw = (W - 2 * PAD) / len(d.horizons)
-            for i, h in enumerate(d.horizons):
-                x = PAD + i * cw
-                lab = f"{h.candles} vela" + ("s" if h.candles > 1 else "")
-                c.text(x, lab, 12, DIM)
-                col = GREEN if h.p_up > 0.5 else RED if h.p_up < 0.5 else FG
-                c.text(x, _pct(h.p_up), 18, col, bold=True, dy=15)
-            c.space(42)
-            if d.breakeven is not None:
-                c.para(f"Equilíbrio do payout: {_pct(d.breakeven)} (abaixo disso perde dinheiro no longo prazo)", 12, DIM)
-            c.rule()
-
-        # Módulos
-        for m in (d.modules if ex.details else []):
-            c.text(PAD, m.name, 14, FG, bold=True)
-            bx, bw, by = PAD + 190, W - 2 * PAD - 190, c.y + c.px(6)
-            c.d.rectangle([c.px(bx), by, c.px(bx + bw), by + c.px(6)], fill=LINE)
-            mid = bx + bw / 2
-            end = mid + m.score * m.confidence * bw / 2
-            col = GREEN if m.score > 0 else RED
-            c.d.rectangle([c.px(min(mid, end)), by, c.px(max(mid, end)), by + c.px(6)], fill=col)
-            c.d.line([(c.px(mid), by - c.px(3)), (c.px(mid), by + c.px(9))], fill=DIM, width=max(1, c.px(1)))
-            c.space(19)
-            c.para(m.explanation, 12, DIM)
-            c.space(4)
-        if ex.details:
-            c.rule()
-
-    # Por que não entrar / motivo da incerteza
-    if d.reasons:
-        c.text(PAD, "Por que não entrar agora" if d.action != INCERTA else "Motivo", 13, DIM)
-        c.space(18)
-        for r in d.reasons[:4]:
-            c.para("• " + r, 13, FG)
-        c.rule()
-
-    status = "leitura OK" if reading is None or reading.ok else "leitura incerta"
-    if reading is not None and reading.timings_ms:
-        status += f" · {sum(reading.timings_ms.values()):.0f} ms"
-    c.para(status, 12, DIM)
-    if d.calibrated:
-        c.para("Probabilidade corrigida pelo placar (acertos e erros já conferidos). "
-               "O CandleSense só lê a tela: nunca clica e nunca opera.", 11, DIM)
-    else:
-        c.para("Probabilidade por regras, ainda sem correção: o placar está juntando dados. "
-               "O CandleSense só lê a tela: nunca clica e nunca opera.", 11, DIM)
+    cs = []
+    if reading is not None and reading.candles:
+        cs = [k for k in reading.candles if k.high is not None and k.low is not None][-40:]
+    if reading is not None and reading.ok and cs:
+        _price(c, reading, cs)
+    if ex.chart:
+        if reading is not None and reading.ok and len(cs) >= 3:
+            _chart(c, reading, cs)
+        else:
+            _chart_empty(c, "aguardando a leitura do gráfico")
+    _expiry_tabs(c, d)
+    _signal_card(c, d, reading)
+    _side_pills(c, d)
+    _wallet_card(c, ex)
+    if ex.details and d.action != INCERTA:
+        _modules_card(c, d)
+    _footer(c, d, reading)
     return c.crop()
 
 
@@ -390,8 +686,10 @@ class PanelWindow:
             pass
 
     def show(self, decision: Decision, reading: Optional[ChartReading] = None,
-             extras: Optional[PanelExtras] = None) -> None:
-        self.cv2.imshow(self.NAME, render(decision, reading, self.scale, extras))
+             extras: Optional[PanelExtras] = None, overlay: Optional[np.ndarray] = None) -> None:
+        """Mostra o painel; ``overlay`` (a carteira) troca o conteúdo na mesma janela."""
+        img = overlay if overlay is not None else render(decision, reading, self.scale, extras)
+        self.cv2.imshow(self.NAME, img)
         self._frames += 1
         if self._frames in (1, 3, 10) or self._frames % 50 == 0:
             from ..platform.appmode import window_buttons
