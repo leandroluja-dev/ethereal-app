@@ -212,6 +212,7 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
     a = days.get(acc) if acc else None
     nome = {"real": "REAL", "treino": "treino"}.get(acc or "", "?")
     extras.wallet_account = acc
+    extras.wallet_balance = wallet.balance.get(acc) if acc else None
     extras.wallet_n = a.n if a is not None else (0 if acc else None)
     extras.wallet_wins = a.wins if a is not None else 0
     extras.wallet_losses = a.losses if a is not None else 0

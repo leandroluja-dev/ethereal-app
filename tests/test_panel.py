@@ -119,9 +119,12 @@ def test_button_hover_and_press_change_look():
     assert looks[0] < looks[1] < looks[2]
 
 
-def test_timeframe_hint_line():
+def test_timeframe_hint_line(monkeypatch):
     """A linha do melhor tempo de vela aparece abaixo do cabeçalho e aumenta o painel."""
+    import candlesense.ui.panel as pn
     from candlesense.ui.panel import PanelExtras
+
+    monkeypatch.setattr(pn, "MIN_H", 0)
 
     r = reading(candles_from_path(zigzag_up()), timeframe=300)
     d = RuleEngine().evaluate(r)
@@ -140,3 +143,38 @@ def test_tf_advice_from_store(tmp_path):
     ex = PanelExtras()
     m._tf_advice(ex, Store(tmp_path / "x.db"))
     assert ex.tf_advice and ex.tf_best is None
+
+
+
+def test_fixed_height_and_no_nao_entre():
+    """Sem sinal e com leitura incerta o painel tem a mesma altura e mostra só "Aguarde"."""
+    from candlesense.ui.panel import MIN_H, PanelExtras
+
+    ok = reading(candles_from_path(zigzag_up()), timeframe=60)
+    bad = reading(candles_from_path(zigzag_up()), ok=False, timeframe=60)
+    ex = PanelExtras(wallet_balance=923.22, wallet_account="treino", wallet_n=0)
+    a = render(RuleEngine().evaluate(ok), ok, extras=ex)
+    b = render(RuleEngine().evaluate(bad), bad, extras=ex)
+    assert a.shape == b.shape and a.shape[0] == MIN_H
+
+
+def test_panel_window_keeps_last_good_chart(monkeypatch):
+    """Leitura incerta por um instante não troca a tela: o gráfico fica o da última leitura boa."""
+    import candlesense.ui.panel as pn
+
+    shown = []
+    monkeypatch.setattr(pn, "render", lambda d, r, s, e: shown.append((r, e.stale)) or None)
+
+    class FakeCv2:
+        def imshow(self, *a):
+            pass
+
+    w = pn.PanelWindow.__new__(pn.PanelWindow)
+    w.cv2, w.scale, w._frames, w._placed, w.place = FakeCv2(), 1.0, 99, True, None
+    monkeypatch.setattr("candlesense.platform.appmode.window_buttons", lambda name: None)
+    ok = reading(candles_from_path(zigzag_up()), timeframe=60)
+    bad = reading(candles_from_path(zigzag_up()), ok=False, timeframe=60)
+    ex = pn.PanelExtras()
+    w.show(None, ok, ex)
+    w.show(None, bad, ex)
+    assert shown[0] == (ok, False) and shown[1] == (ok, True)

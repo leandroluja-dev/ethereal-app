@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -31,6 +32,7 @@ PAD = 16         # margem lateral
 GAP = 12         # espaço entre blocos
 R_CARD = 18      # raio dos cartões
 SS = 2           # superamostragem (desenha 2x e reduz)
+MIN_H = 700      # altura mínima do painel (sem detalhes)
 
 BG = (0, 0, 0)
 CARD = (28, 28, 30)
@@ -171,8 +173,8 @@ class _Canvas:
     def card(self, y1: float, y2: float, fill=CARD) -> None:
         self.rrect(PAD, y1, W - PAD, y2, R_CARD, fill=fill)
 
-    def crop(self) -> np.ndarray:
-        h = self.y + self.px(PAD)
+    def crop(self, min_h: float = 0) -> np.ndarray:
+        h = max(self.y + self.px(PAD), self.px(min_h))
         img = self.img.crop((0, 0, self.w, h))
         out_w = int(round(W * self.out_scale))
         out_h = max(1, int(round(h / SS)))
@@ -195,6 +197,8 @@ class PanelExtras:
     open_trade: Optional[dict] = None
     # melhor tempo de vela pelo histórico: frase pronta e o tempo (s) recomendado, se houver
     tf_advice: Optional[str] = None
+    wallet_balance: Optional[float] = None  # saldo lido na IQ Option
+    stale: bool = False                     # leitura incerta agora: gráfico é o da última leitura boa
     tf_best: Optional[int] = None
     exit_alert: Optional[str] = None
     details: bool = False       # explicação dos módulos (tecla d)
@@ -482,32 +486,107 @@ def _live_result(t: dict, price: Optional[float]) -> tuple[Optional[float], Opti
 
 
 def _wallet_strip(c: _Canvas, ex: PanelExtras) -> None:
-    """Carteira de hoje no topo, numa linha: resultado, entradas e a conta (REAL/TREINO)."""
-    if not (ex.wallet_line or ex.wallet_n is not None):
-        return
+    """Carteira no topo: o saldo da conta (como está na IQ Option), a conta e o resultado de hoje."""
     y0 = c.u
-    h = 56
+    h = 64
     c.card(y0, y0 + h)
+    inner = PAD + 18
     cy = y0 + h / 2
-    _ring(c, PAD + 14 + 15, cy, 15, ex.wallet_n, ex.wallet_wins or 0, ex.wallet_losses or 0, size=13)
-    x = PAD + 14 + 30 + 12
-    if ex.wallet_n is not None:
-        pr = ex.wallet_profit or 0.0
-        col = GREEN if pr > 0 else RED if pr < 0 else FG
-        c.at(x, cy - 9, "Hoje", 12, DIM, anchor="lm")
-        c.at(x, cy + 9, _money(pr), 17, col, "semibold", anchor="lm")
-        n, g, p = ex.wallet_n or 0, ex.wallet_wins or 0, ex.wallet_losses or 0
-        x2 = x + max(86, c.tw(_money(pr), 17, "semibold") + 14)
-        c.at(x2, cy - 9, f"{n} entrada{'s' if n != 1 else ''}", 12, DIM, anchor="lm")
-        c.at(x2, cy + 9, f"{g} ganho{'s' if g != 1 else ''} · {p} perda{'s' if p != 1 else ''}", 13, FG, anchor="lm")
+    c.at(inner, cy - 11, "Saldo na carteira", 12, DIM, anchor="lm")
+    if ex.wallet_balance is not None:
+        c.at(inner, cy + 10, _money(ex.wallet_balance).lstrip("+"), 22, FG, "bold", anchor="lm")
     else:
-        c.at(x, cy, ex.wallet_line or "", 13, DIM, anchor="lm")
+        c.at(inner, cy + 10, "lendo o saldo...", 16, DIM, "medium", anchor="lm")
+    right = W - PAD - 16
     if ex.wallet_account in ("real", "treino"):
         lab = "REAL" if ex.wallet_account == "real" else "TREINO"
         bc = GREEN if ex.wallet_account == "real" else ORANGE
         bw = c.tw(lab, 11, "bold") + 16
-        c.rrect(W - PAD - 14 - bw, cy - 10, W - PAD - 14, cy + 10, 10, outline=bc, width=1.2)
-        c.at(W - PAD - 14 - bw / 2, cy, lab, 11, bc, "bold", anchor="mm")
+        c.rrect(right - bw, cy - 21, right, cy - 3, 9, outline=bc, width=1.2)
+        c.at(right - bw / 2, cy - 12, lab, 11, bc, "bold", anchor="mm")
+    if ex.wallet_n is not None:
+        pr = ex.wallet_profit or 0.0
+        col = GREEN if pr > 0 else RED if pr < 0 else DIM
+        txt = _money(pr) if pr else "$0,00"
+        c.at(right, cy + 11, txt, 14, col, "semibold", anchor="rm")
+        c.at(right - c.tw(txt, 14, "semibold") - 6, cy + 11, "hoje", 12, DIM, anchor="rm")
+    c.y = c.px(y0 + h + GAP)
+
+
+def _secs(s: int) -> str:
+    return f"{s}s" if s < 60 else _mmss(s)
+
+
+ACTION_H = 156  # altura fixa do cartão principal: a tela não pula entre um estado e outro
+
+
+def _action_card(c: _Canvas, d: Decision, ex: PanelExtras) -> None:
+    """Cartão principal. Só dá ordem quando é para agir: COMPRE AGORA, VENDA AGORA ou SAIR AGORA.
+
+    Fora disso fica calmo ("Aguarde", ou "Segure" com operação aberta), sem piscar avisos.
+    """
+    y0 = c.u
+    h = ACTION_H
+    inner = PAD + 20
+    right = W - PAD - 20
+    t = ex.open_trade
+    if ex.exit_alert:
+        c.rrect(PAD, y0, W - PAD, y0 + h, R_CARD, fill=(150, 28, 32))
+        c.at(inner, y0 + 50, "SAIR AGORA", 34, WHITE, "bold", anchor="ls")
+        c.at(inner, y0 + 66, "Venda a operação na IQ Option", 17, WHITE, "semibold")
+        for i, ln in enumerate(_wrap(c.d, ex.exit_alert, c.font(13), c.px(W - 2 * inner))[:2]):
+            c.at(inner, y0 + 96 + 18 * i, ln, 13, (255, 215, 215))
+    elif d.signal and not t:
+        buy = d.action == COMPRA
+        bg, fg = (GREEN, BLACK) if buy else (RED, WHITE)
+        c.rrect(PAD, y0, W - PAD, y0 + h, R_CARD, fill=bg)
+        c.at(inner, y0 + 50, "COMPRE AGORA" if buy else "VENDA AGORA", 32, fg, "bold", anchor="ls")
+        c.at(inner, y0 + 64, f"Clique em {'HIGHER ▲' if buy else 'LOWER ▼'}", 19, fg, "semibold")
+        info = f"expiração {d.expiry_text()}"
+        if d.best is not None:
+            info += f" · chance {_pct0(d.best.prob)}"
+        c.at(inner, y0 + h - 22, info, 13, fg, "medium", anchor="ls")
+        if d.seconds_to_enter is not None:
+            c.at(right, y0 + 92, _secs(d.seconds_to_enter), 40, fg, "bold", anchor="rs")
+            c.at(right, y0 + 98, "para clicar", 12, fg, "medium", anchor="ra")
+    else:
+        c.card(y0, y0 + h)
+        if t:
+            title = "SEGURE"
+            sub = "Deixe a operação correr até o fim. Se for para sair, o app avisa aqui com um som."
+        else:
+            title = "Aguarde"
+            sub = "Quando for hora, aparece aqui COMPRE AGORA ou VENDA AGORA, com um som."
+        c.at(inner, y0 + 52, title, 32, FG, "bold", anchor="ls")
+        for i, ln in enumerate(_wrap(c.d, sub, c.font(14), c.px(W - 2 * inner))[:3]):
+            c.at(inner, y0 + 76 + 20 * i, ln, 14, DIM)
+        live = d.action != INCERTA
+        _gauge(c, right - 30, y0 + 50, 28, d.strength if live else None)
+    c.y = c.px(y0 + h + GAP)
+
+
+def _side_pills(c: _Canvas, d: Decision) -> None:
+    """Força da compra x da venda em %, como os botões Buy / Sell da referência (só mostram, nunca clicam)."""
+    y0 = c.u
+    h = 46
+    gap = 10
+    pw = (W - 2 * PAD - gap) / 2
+    known = d.best is not None and d.action != INCERTA
+    p_up = d.best.p_up if known else None
+    for i, (name, col) in enumerate((("Compra", GREEN), ("Venda", RED))):
+        x = PAD + i * (pw + gap)
+        p = None if p_up is None else (p_up if i == 0 else 1 - p_up)
+        lit = d.signal and ((i == 0) == (d.action == COMPRA))
+        if lit:
+            fill, fg, pc = col, (BLACK if i == 0 else WHITE), (BLACK if i == 0 else WHITE)
+        else:
+            fill, fg, pc = CARD_2, FG, (col if p is not None and p > 0.5 else DIM)
+        c.rrect(x, y0, x + pw, y0 + h, h / 2, fill=fill)
+        t1, t2 = name, (_pct0(p) if p is not None else "—")
+        w1, w2 = c.tw(t1, 15, "semibold"), c.tw(t2, 15, "bold")
+        sx = x + pw / 2 - (w1 + 8 + w2) / 2
+        c.at(sx, y0 + h / 2, t1, 15, fg, "semibold", anchor="lm")
+        c.at(sx + w1 + 8, y0 + h / 2, t2, 15, pc, "bold", anchor="lm")
     c.y = c.px(y0 + h + GAP)
 
 
@@ -552,100 +631,6 @@ def _open_trade_card(c: _Canvas, ex: PanelExtras, reading: Optional[ChartReading
     c.at(inner, y0 + 74, txt, 12, DIM)
     if profit is None and entry is not None and price is not None:
         c.at(inner, y0 + 92, "a direção só é conhecida quando você segue um sinal do app", 11, FAINT)
-    c.y = c.px(y0 + h + GAP)
-
-
-def _action(d: Decision, ex: PanelExtras) -> tuple[str, str, tuple, tuple, list]:
-    """A ordem final: (título, subtítulo, cor de fundo, cor do texto, linhas de apoio)."""
-    lines: list[tuple[str, str, tuple, tuple]] = []
-    t = ex.open_trade
-    if ex.exit_alert:
-        return ("SAIR AGORA", ex.exit_alert + ". Venda a operação na IQ Option.", (150, 28, 32), WHITE, lines)
-    if d.action == INCERTA:
-        why = d.reasons[0] if d.reasons else "a leitura da tela não fechou"
-        lines.append(("dot", why, FG, ORANGE))
-        return ("NÃO ENTRE", "leitura incerta: sem sinal até a leitura voltar", CARD, ORANGE, lines)
-    if t:
-        lado = {COMPRA: "compra", VENDA: "venda"}.get(t.get("direction"), "operação")
-        return ("SEGURE", f"mantenha a {lado} até o vencimento; o app avisa se for para sair", CARD, FG, lines)
-    if d.best is not None:
-        lado = "alta" if d.best.p_up >= 0.5 else "baixa"
-        lines.append(("up" if lado == "alta" else "down", f"{_pct(d.best.prob)} de chance de {lado} em {d.expiry_text()}",
-                      FG, GREEN if lado == "alta" else RED))
-    if d.seconds_to_enter is not None:
-        fase = f" · {d.phase} da vela" if d.phase else ""
-        lines.append(("clock", f"Clique em até {_mmss(d.seconds_to_enter)} (já conta o seu atraso){fase}", FG, DIM))
-    if d.threshold is not None:
-        be = f" · empate {_pct(d.breakeven)}" if d.breakeven is not None else ""
-        lines.append(("target", f"Mínimo para entrar: {_pct(d.threshold)}{be}", DIM, DIM))
-    if d.expiry_hint:
-        lines.append(("bars", d.expiry_hint, ORANGE if "sugerida é" in d.expiry_hint else DIM, DIM))
-    if d.signal:
-        if d.action == COMPRA:
-            return ("COMPRE AGORA", f"clique em HIGHER · expiração {d.expiry_text()}", GREEN, BLACK, lines)
-        return ("VENDA AGORA", f"clique em LOWER · expiração {d.expiry_text()}", RED, WHITE, lines)
-    motivo = d.reasons[0] if d.reasons else "sem vantagem agora"
-    return ("AGUARDE", motivo, CARD, FG, lines)
-
-
-def _action_card(c: _Canvas, d: Decision, ex: PanelExtras) -> None:
-    """Cartão principal: a ordem final (comprar, vender, aguardar, segurar ou sair) e a força em %."""
-    title, sub, bg, tcol, lines = _action(d, ex)
-    lit = bg not in (CARD,)
-    y0 = c.u
-    inner = PAD + 18
-    sub_col = (tcol if lit else DIM)
-    fs = c.font(14, "medium")
-    sub_lines = _wrap(c.d, sub, fs, c.px(W - 2 * inner - (78 if not lit else 0)))[:3]
-    text_w = W - PAD - 18 - (inner + 24)
-    f = c.font(14)
-    hl = sum(len(_wrap(c.d, txt, f, c.px(text_w))) for _, txt, _, _ in lines)
-    head_h = 18 + 34 + 8 + 19 * len(sub_lines) + 14
-    body_h = (hl * 20 + 24) if lines else 0
-    h = head_h + body_h
-    # parte de cima colorida com a ordem; parte de baixo com os números
-    c.card(y0, y0 + h)
-    if lit:
-        c.rrect(PAD, y0, W - PAD, y0 + head_h, R_CARD, fill=bg)
-        if body_h:
-            c.d.rectangle([c.px(PAD), c.px(y0 + head_h - R_CARD), c.px(W - PAD), c.px(y0 + head_h)], fill=bg)
-    tsize = 32
-    room = W - 2 * inner - (78 if not lit else 0)
-    while tsize > 20 and c.tw(title, tsize, "bold") > room:
-        tsize -= 2
-    c.at(inner, y0 + 18 + 32, title, tsize, tcol, "bold", anchor="ls")
-    for i, ln in enumerate(sub_lines):
-        c.at(inner, y0 + 18 + 40 + 19 * i, ln, 14, sub_col, "medium")
-    if not lit:  # medidor de força ao lado quando não há ordem acesa
-        _gauge(c, W - PAD - 18 - 32, y0 + 18 + 32, 28, None if d.action == INCERTA else d.strength)
-    c.y = c.px(y0 + head_h + 12)
-    for kind, txt, col, icol in lines:
-        _icon_line(c, kind, txt, col, icol, 14, x=inner, width=text_w)
-    c.y = c.px(y0 + h + GAP)
-
-
-def _side_pills(c: _Canvas, d: Decision) -> None:
-    """Força da compra x da venda em %, como os botões Buy / Sell da referência (só mostram, nunca clicam)."""
-    if d.best is None or d.action == INCERTA:
-        return
-    y0 = c.u
-    h = 50
-    gap = 10
-    pw = (W - 2 * PAD - gap) / 2
-    p_up = d.best.p_up
-    for i, (name, p, col) in enumerate((("Compra", p_up, GREEN), ("Venda", 1 - p_up, RED))):
-        x = PAD + i * (pw + gap)
-        lit = d.signal and ((i == 0) == (d.action == COMPRA))
-        if lit:
-            fill, fg, pc = col, (BLACK if i == 0 else WHITE), (BLACK if i == 0 else WHITE)
-        else:
-            fill, fg, pc = CARD_2, FG, (col if p > 0.5 else DIM)
-        c.rrect(x, y0, x + pw, y0 + h, h / 2, fill=fill)
-        t1, t2 = name, _pct0(p)
-        w1, w2 = c.tw(t1, 16, "semibold"), c.tw(t2, 16, "bold")
-        sx = x + pw / 2 - (w1 + 8 + w2) / 2
-        c.at(sx, y0 + h / 2, t1, 16, fg, "semibold", anchor="lm")
-        c.at(sx + w1 + 8, y0 + h / 2, t2, 16, pc, "bold", anchor="lm")
     c.y = c.px(y0 + h + GAP)
 
 
@@ -695,9 +680,11 @@ def _modules_card(c: _Canvas, d: Decision) -> None:
     c.y = c.px(y0 + h + GAP)
 
 
-def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading]) -> None:
+def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading], ex: Optional[PanelExtras] = None) -> None:
     c.space(2)
     st = "leitura ok" if reading is None or reading.ok else "leitura incerta"
+    if ex is not None and ex.stale:
+        st = "leitura incerta agora (gráfico da última leitura boa)"
     if reading is not None and reading.timings_ms:
         st += f" · {sum(reading.timings_ms.values()):.0f} ms"
     st += " · " + ("probabilidade corrigida pelo placar" if d.calibrated else "probabilidade por regras")
@@ -714,26 +701,25 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
     c = _Canvas(scale, height=1700 if ex.details else 1100)
 
     _header(c, reading, ex)
-    _wallet_strip(c, ex)          # carteira no topo
+    _wallet_strip(c, ex)              # saldo da carteira no topo
     _open_trade_card(c, ex, reading)  # operação aberta, ao vivo
-    _action_card(c, d, ex)        # a ordem final: comprar, vender, aguardar, segurar ou sair
-    _side_pills(c, d)             # força da compra x venda em %
+    _action_card(c, d, ex)            # COMPRE AGORA / VENDA AGORA / SAIR AGORA, ou Aguarde / Segure
+    _side_pills(c, d)                 # força da compra x venda em %
 
     cs = []
     if reading is not None and reading.candles:
         cs = [k for k in reading.candles if k.high is not None and k.low is not None][-40:]
-    if reading is not None and reading.ok and cs:
-        _price(c, reading, cs)
     if ex.chart:
         if reading is not None and reading.ok and len(cs) >= 3:
+            _price(c, reading, cs)
             _chart(c, reading, cs, h=120)
         else:
-            _chart_empty(c, "aguardando a leitura do gráfico", h=100)
-    _expiry_tabs(c, d)
+            _chart_empty(c, "aguardando a leitura do gráfico", h=204)
     if ex.details and d.action != INCERTA:
         _modules_card(c, d)
-    _footer(c, d, reading)
-    return c.crop()
+    _footer(c, d, reading, ex)
+    # altura mínima fixa: a janela não encolhe nem cresce a cada leitura (era o que fazia piscar)
+    return c.crop(min_h=0 if ex.details else MIN_H)
 
 
 class PanelWindow:
@@ -767,7 +753,23 @@ class PanelWindow:
     def show(self, decision: Decision, reading: Optional[ChartReading] = None,
              extras: Optional[PanelExtras] = None, overlay: Optional[np.ndarray] = None) -> None:
         """Mostra o painel; ``overlay`` (a carteira) troca o conteúdo na mesma janela."""
-        img = overlay if overlay is not None else render(decision, reading, self.scale, extras)
+        if overlay is not None:
+            img = overlay
+        else:
+            # Leitura incerta por um instante: mantém o gráfico da última leitura boa (até 20 s)
+            # em vez de trocar a tela inteira.
+            now = time.monotonic()
+            if reading is not None and reading.ok:
+                self._last_ok = (now, reading)
+            shown = reading
+            if extras is not None:
+                extras.stale = False
+            last = getattr(self, "_last_ok", None)
+            if reading is not None and not reading.ok and last is not None and now - last[0] < 20:
+                shown = last[1]
+                if extras is not None:
+                    extras.stale = True
+            img = render(decision, shown, self.scale, extras)
         self.cv2.imshow(self.NAME, img)
         self._frames += 1
         if self._frames in (1, 3, 10) or self._frames % 50 == 0:
