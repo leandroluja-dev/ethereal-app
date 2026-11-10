@@ -118,10 +118,11 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int) -> list[str]:
 class _Canvas:
     """Folha de desenho. Coordenadas em unidades do painel; ``y`` corre em pixels internos."""
 
-    def __init__(self, scale: float, height: int = 1400) -> None:
+    def __init__(self, scale: float, height: int = 1400, width: int = W) -> None:
         self.out_scale = scale
         self.s = scale * SS
-        self.w = int(round(W * self.s))
+        self.uw = width  # largura em unidades do painel
+        self.w = int(round(width * self.s))
         self.img = Image.new("RGB", (self.w, int(height * self.s)), BG)
         self.d = ImageDraw.Draw(self.img)
         self.y = 0
@@ -176,7 +177,7 @@ class _Canvas:
     def crop(self, min_h: float = 0) -> np.ndarray:
         h = max(self.y + self.px(PAD), self.px(min_h))
         img = self.img.crop((0, 0, self.w, h))
-        out_w = int(round(W * self.out_scale))
+        out_w = int(round(self.uw * self.out_scale))
         out_h = max(1, int(round(h / SS)))
         img = img.resize((out_w, out_h), Image.BOX)
         return np.asarray(img)[:, :, ::-1].copy()  # RGB -> BGR (OpenCV)
@@ -776,8 +777,11 @@ class PanelWindow:
             img = render(decision, shown, self.scale, extras)
         if sides is not None:
             try:
-                side = sides.image(img.shape[0])
+                full = sides.height(img.shape[0]) if sides.visible else img.shape[0]
+                side = sides.image(full)
                 if side is not None:
+                    if full > img.shape[0]:  # o painel fica no alto; embaixo dele, fundo preto
+                        img = np.vstack([img, np.zeros((full - img.shape[0], img.shape[1], 3), np.uint8)])
                     img = np.hstack([img, side])
             except Exception as e:  # as telas novas nunca derrubam o painel
                 print(f"telas das entradas: {e!r}", flush=True)

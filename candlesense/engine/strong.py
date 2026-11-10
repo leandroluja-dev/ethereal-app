@@ -176,13 +176,18 @@ class StrongMode:
     # ------------------------------------------------------------ telas do simulador
 
     def entries(self, since: float = 0.0, threshold: float = 0.62, stake: float = 10.0,
-                min_payout: int = 80, now: Optional[float] = None) -> list[dict]:
+                min_payout: int = 80, now: Optional[float] = None, candle5: bool = False) -> list[dict]:
         """Entradas virtuais do simulador, uma por medição acima do corte (mais antiga primeiro).
 
         Mesmas regras de ``simulate``. Cada entrada traz: asset, start, ts, side
         (COMPRA/VENDA), chance, price (preço de entrada), payout, stake, gain (quanto
         ganha se acertar), expiry_ts, status (aberta, ganhou, perdeu, empate ou
         sem leitura) e profit (None enquanto aberta).
+
+        ``candle5``: carteira "vela de 5 min" (experimento). Entra em qualquer minuto da
+        vela de 5 min do relógio, com pelo menos 2 min pela frente, e vence no fechamento
+        dela, como a expiração da IQ. Conferida pela fita. A chance é a mesma conta de
+        5 min à frente, então para prazos menores ela é só uma aproximação.
         """
         now = time.time() if now is None else now
         rows = self.db.execute(
@@ -198,6 +203,16 @@ class StrongMode:
             side = "COMPRA" if p >= 0.5 else "VENDA"
             gain = stake * pay / 100.0
             expiry = start + 360  # fecha a vela start+300: 5 min depois da entrada
+            if candle5:
+                enter = start + 60
+                expiry = (enter // 300 + 1) * 300
+                if expiry - enter < 120:
+                    continue  # menos de 2 min até o fim da vela de 5 min: não entra
+                row = self.db.execute("SELECT close, updated FROM fita WHERE asset=? AND start=?",
+                                      (asset, expiry - 60)).fetchone()
+                res = None
+                if row is not None and row[1] >= expiry + 10:
+                    res = 1 if row[0] > price else 0 if row[0] < price else -1
             if res is None:
                 status = "aberta" if now < expiry + 120 else "sem leitura"
                 profit = None

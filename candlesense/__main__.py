@@ -245,39 +245,47 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
 
 
 def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
-    """Entradas do simulador para as telas 2 e 3, com som quando uma entrada é conferida."""
+    """As três carteiras do simulador para as telas ao lado do painel, com som quando sai resultado."""
     from .alerts import play
     from .history.wallet import day_start
-    from .ui.sim_view import SimState
+    from .ui.sim_view import WALLETS, SimState
 
     now = time.time()
-    entries = strong.entries(day_start(now), now=now)
     first = sim.state is None
     seen = sim.__dict__.setdefault("_status", {})
     seen_at = sim.__dict__.setdefault("_seen_at", {})
-    for e in entries:
-        k = (e["asset"], e["start"])
-        before = seen.get(k)
-        if before != e["status"]:
-            if before is None and e["status"] == "aberta" and not first:
-                print(f"simulador: entrou {e['side']} {e['asset']} R$ {e['stake']:.2f} "
-                      f"(chance {e['chance']:.0%}, ganha R$ {e['gain']:.2f})", flush=True)
-            if before == "aberta" and e["status"] in ("ganhou", "perdeu", "empate"):
-                seen_at[k] = now
-                print(f"simulador: {e['status']} {e['asset']} {e['profit']:+.2f}", flush=True)
-                if play_sound and e["status"] != "empate":
-                    play(e["status"])
-            seen[k] = e["status"]
-        if k in seen_at:
-            e["seen_at"] = seen_at[k]
+    sound = None
+    all_entries = {}
+    for spec in WALLETS:
+        entries = strong.entries(day_start(now), threshold=spec.cut, now=now, candle5=spec.candle5)
+        for e in entries:
+            k = (spec.key, e["asset"], e["start"])
+            before = seen.get(k)
+            if before != e["status"]:
+                if before is None and e["status"] == "aberta" and not first:
+                    print(f"simulador {spec.key}: entrou {e['side']} {e['asset']} R$ {e['stake']:.2f} "
+                          f"(chance {e['chance']:.0%}, ganha R$ {e['gain']:.2f})", flush=True)
+                if before == "aberta" and e["status"] in ("ganhou", "perdeu", "empate"):
+                    seen_at[k] = now
+                    print(f"simulador {spec.key}: {e['status']} {e['asset']} {e['profit']:+.2f}", flush=True)
+                    if e["status"] == "ganhou":
+                        sound = "ganhou"  # ganho vale mais que perda no mesmo instante
+                    elif e["status"] == "perdeu" and sound is None:
+                        sound = "perdeu"
+                seen[k] = e["status"]
+            if k in seen_at:
+                e["seen_at"] = seen_at[k]
+        all_entries[spec.key] = entries
+    if sound and play_sound:
+        play(sound)
     note = None
     if asset and "OTC" in asset.upper():
         note = "Em OTC o app não entra: o modelo só foi testado no mercado normal."
     elif r.ok and r.timeframe_s and r.timeframe_s != 60:
-        note = "O app só entra no gráfico de 1 min. Mude a vela para 1 min para ele medir."
+        note = "O app só entra no gráfico de 1 min. Mude a vela para 1 min."
     hist = strong.history_minutes(asset, now) if asset and asset != "?" else None
     last = strong.last_measure(asset) if asset and asset != "?" else None
-    sim.state = SimState(entries=entries, now=now, asset=asset if asset != "?" else None,
+    sim.state = SimState(entries=all_entries, now=now, asset=asset if asset != "?" else None,
                          price=r.current_price if r.ok else None,
                          decimals=r.scale.decimals if r.scale else 5, hist_min=hist, note=note,
                          last_p=last[1] if last else None, last_ts=last[0] if last else None)
