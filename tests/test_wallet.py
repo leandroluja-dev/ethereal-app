@@ -195,3 +195,30 @@ def test_report_without_balance():
 
     rep = wallet_report(Store(":memory:"), None)
     assert rep.account is None and rep.today is None
+
+
+def test_parse_money_ignores_menu_arrow_and_cursor():
+    # O OCR lê a seta do menu ao lado do saldo como "~" e o cursor do Invest como "|".
+    assert parse_money("$923.22 ~") == 923.22
+    assert parse_money("$923.22▾") == 923.22
+    assert parse_money("$ 1|") == 1.0
+
+
+def test_real_balance_crop_is_found_and_is_practice():
+    """Topo real da IQ Option (saldo laranja com a seta do menu), num quadro de janela inteira."""
+    from pathlib import Path
+
+    import pytest
+    from candlesense.vision.wallet import find_balance
+
+    try:
+        from candlesense.vision.ocr import best_engine
+        eng = best_engine("auto")
+    except Exception:
+        pytest.skip("sem OCR")
+    crop = cv2.imread(str(Path(__file__).parent / "fixtures/real/saldo_treino_seta.png"))
+    full = np.zeros((900, 2400, 3), np.uint8)
+    full[10:10 + crop.shape[0], 2400 - crop.shape[1]:] = crop
+    box = find_balance(eng.read(full, None), Box(0, 200, 1600, 600), full.shape[1], full.shape[0])
+    assert box is not None
+    assert account_kind(full, box) == "treino"
