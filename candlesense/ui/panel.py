@@ -208,6 +208,9 @@ class PanelExtras:
     details: bool = False       # explicação dos módulos (tecla d)
     chart: bool = True          # gráfico ao vivo
     buttons: bool = True        # botão Carteira no topo
+    # histórico longo do mercado: [(período, variação %)] e um aviso quando não há
+    market: Optional[list] = None
+    market_note: Optional[str] = None
 
 
 # Botões desenhados no próprio painel. (x1, y1, x2, y2) em unidades do painel, antes da escala.
@@ -700,6 +703,30 @@ def _modules_card(c: _Canvas, d: Decision) -> None:
     c.y = c.px(y0 + h + GAP)
 
 
+def _market_card(c: _Canvas, ex: PanelExtras) -> None:
+    """Alta ou baixa do par hoje, ontem, em 7 dias, em 30 dias e no ano (histórico público)."""
+    if not ex.market and not ex.market_note:
+        return
+    y0 = c.u + 2
+    if not ex.market:
+        c.at(PAD, y0, ex.market_note, 12, DIM)
+        c.y = c.px(y0 + 24)
+        return
+    h = 58
+    c.card(y0, y0 + h)
+    n = len(ex.market)
+    cw = (W - 2 * PAD) / n
+    for i, (name, ch) in enumerate(ex.market):
+        cx = PAD + cw * i + cw / 2
+        col = GREEN if ch > 0 else RED if ch < 0 else DIM
+        c.at(cx, y0 + 10, name.capitalize(), 11, DIM, anchor="ma")
+        txt = f"{abs(ch):.2f}%".replace(".", ",")
+        tw = c.tw(txt, 13, "semibold") + 14
+        _icon(c, "up" if ch >= 0 else "down", cx - tw / 2, y0 + 31, col, 11)
+        c.at(cx - tw / 2 + 14, y0 + 29, txt, 13, col, "semibold")
+    c.y = c.px(y0 + h + GAP)
+
+
 def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading], ex: Optional[PanelExtras] = None) -> None:
     c.space(2)
     st = "leitura ok" if reading is None or reading.ok else "leitura incerta"
@@ -735,6 +762,7 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
             _chart(c, reading, cs, h=120)
         else:
             _chart_empty(c, "aguardando a leitura do gráfico", h=204)
+    _market_card(c, ex)               # alta/baixa hoje, ontem, 7 dias, 30 dias e ano
     if ex.details and d.action != INCERTA:
         _modules_card(c, d)
     _footer(c, d, reading, ex)

@@ -291,6 +291,29 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
                          last_p=last[1] if last else None, last_ts=last[0] if last else None)
 
 
+def _market_extras(extras, market, store, asset: str, r) -> None:
+    """Alta ou baixa do par hoje, ontem, em 7 dias, em 30 dias e no ano, para o painel."""
+    from .history.market import context, symbol
+
+    if not asset or asset == "?":
+        extras.market, extras.market_note = None, None
+        return
+    if symbol(asset) is None:
+        extras.market = None
+        extras.market_note = "OTC: sem histórico fora da IQ, só o que a tela mostra"
+        return
+    market.want(asset)
+    per = context(store.db, asset, r.current_price if r.ok else None)
+    extras.market = [(p.name, p.change) for p in per] or None
+    if per:
+        extras.market_note = None
+    else:
+        from .feeds.twelvedata import load_key
+
+        extras.market_note = ("buscando o histórico do mercado..." if load_key(market.dados)
+                              else "histórico do mercado: precisa da chave da Twelve Data")
+
+
 def _show_panel(panel, dec, r, extras, wallet_view, sides=None) -> None:
     """Uma janela só: a carteira aparece dentro do próprio painel; as entradas do app ao lado."""
     overlay = wallet_view.image if wallet_view is not None and wallet_view.visible else None
@@ -432,6 +455,15 @@ def cmd_live(args) -> int:
             filler = FitaFiller(Path(args.dados) / "candlesense.db", args.dados).start()
         except Exception as e:
             print(f"twelvedata indisponível: {e!r}", flush=True)
+    market = None
+    if not args.sem_rede:
+        try:  # histórico longo do mercado (dias, meses, anos), pela mesma fonte da fita
+            from .history.market import MarketHistory
+
+            market = MarketHistory(Path(args.dados) / "candlesense.db", args.dados).start()
+        except Exception as e:
+            print(f"histórico do mercado indisponível: {e!r}", flush=True)
+    last_market = 0.0
     extras = PanelExtras()
     wallet_view = None
     sides = None
@@ -551,6 +583,12 @@ def cmd_live(args) -> int:
                     alerted.update(new)
                     if not args.sem_som:
                         play("sair", voice="atenção, considere sair")
+            if market is not None and time.monotonic() - last_market >= 5:
+                last_market = time.monotonic()
+                try:
+                    _market_extras(extras, market, store, asset, r)
+                except Exception as e:  # o histórico do mercado nunca derruba a leitura
+                    print(f"histórico do mercado: {e!r}", flush=True)
             if sides is not None and strong is not None and time.monotonic() - last_sim_view >= 1:
                 last_sim_view = time.monotonic()
                 try:
