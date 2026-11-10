@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import socket
+from collections import deque
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -106,6 +107,7 @@ class WebServer:
         self._lock = threading.Lock()
         self._body = b'{"waiting": true}'
         self._at = 0.0
+        self.ticks: deque = deque(maxlen=600)  # preço lido a cada ~1 s (10 min) para o gráfico ao vivo
         self.last_hit = 0.0  # última vez que alguma página aberta pediu o estado
         srv = self
 
@@ -135,6 +137,14 @@ class WebServer:
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, name="pagina", daemon=True)
         self.thread.start()
+
+    def tick(self, ts: float, asset: Optional[str], price: Optional[float]) -> list:
+        """Guarda o preço lido agora; troca de par zera o gráfico."""
+        if self.ticks and self.ticks[-1][2] != asset:
+            self.ticks.clear()
+        if price is not None and (not self.ticks or ts - self.ticks[-1][0] >= 0.9):
+            self.ticks.append((ts, price, asset))
+        return [[round(t, 1), p] for t, p, _ in self.ticks]
 
     def publish(self, state: dict) -> None:
         body = json.dumps(state, ensure_ascii=False, default=float).encode()

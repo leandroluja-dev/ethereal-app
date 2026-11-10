@@ -99,6 +99,47 @@ button { font: inherit; color: inherit; }
 .side .foot { margin-top: auto; font-size: 11px; color: var(--faint); line-height: 1.5; }
 #phone { display: block; margin-top: 8px; color: var(--dim); font-size: 12px; user-select: all; }
 
+/* ao vivo */
+.livebar { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 22px; padding: 14px 20px; border-radius: var(--r-md); }
+.livebar .clock { display: flex; flex-direction: column; gap: 4px; min-width: 128px; }
+.onair { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; letter-spacing: .12em; font-weight: 700; color: var(--green); }
+.onair i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(63,209,116,.6); }
+.onair.off { color: var(--amber); } .onair.off i { background: var(--amber); }
+.livebar .hms { font-size: 26px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.livebar .age { font-size: 11px; color: var(--dim); }
+.pricebox { display: flex; align-items: center; gap: 18px; min-width: 0; }
+.price { font-size: 34px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -.01em; white-space: nowrap; border-radius: 10px; padding: 0 6px; transition: background-color .6s ease; }
+.price small { font-size: 22px; opacity: .65; }
+.price.up { background-color: rgba(63,209,116,.22); } .price.down { background-color: rgba(239,75,75,.22); }
+.pchg { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.spark { flex: 1; min-width: 0; height: 56px; }
+.spark svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.odds { display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
+.odds .bar { position: relative; height: 26px; border-radius: 9px; overflow: hidden; background: rgba(255,255,255,.05); border: 1px solid var(--stroke); font-size: 12px; }
+.odds .bar b { position: absolute; inset: 0 auto 0 0; transition: width .6s ease; }
+.odds .bar span { position: relative; display: flex; justify-content: space-between; padding: 0 10px; line-height: 24px; }
+.mkt { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
+.mkt span { padding: 3px 7px; border-radius: 7px; background: rgba(255,255,255,.04); border: 1px solid var(--stroke); white-space: nowrap; }
+.filter.act-buy { background: linear-gradient(150deg, rgba(63,209,116,.55), rgba(15,94,49,.7)); border-color: rgba(160,255,200,.5); }
+.filter.act-sell { background: linear-gradient(150deg, rgba(239,75,75,.55), rgba(109,21,25,.7)); border-color: rgba(255,160,160,.5); }
+.filter.act-buy .big, .filter.act-sell .big { color: #fff; font-size: 17px; letter-spacing: .02em; }
+@media (prefers-reduced-motion: no-preference) {
+  .onair:not(.off) i { animation: pulse 1.6s ease-out infinite; }
+  .filter.act-buy, .filter.act-sell { animation: glow 1.2s ease-in-out infinite alternate; }
+  .tcard.open .val { animation: blink 1s steps(2, start) infinite; }
+}
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(63,209,116,.6); } 100% { box-shadow: 0 0 0 10px rgba(63,209,116,0); } }
+@keyframes glow { from { filter: brightness(1); } to { filter: brightness(1.25); } }
+@keyframes blink { 50% { opacity: .75; } }
+@media (max-width: 1100px) { .livebar { grid-template-columns: minmax(0,1fr) auto; } .livebar .odds { grid-column: 1 / -1; flex-direction: row; } .livebar .odds .bar { flex: 1; } }
+@media (max-width: 720px) {
+  .livebar { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .livebar .clock { flex-direction: row; align-items: baseline; gap: 10px; }
+  .livebar .hms { font-size: 20px; }
+  .pricebox { flex-wrap: wrap; gap: 8px; } .price { font-size: 28px; } .spark { flex-basis: 100%; height: 48px; }
+  .livebar .odds { flex-direction: column; min-width: 0; }
+}
+
 /* principal */
 .main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .filters { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
@@ -179,7 +220,7 @@ button { font: inherit; color: inherit; }
 /* celular: uma coluna, linha do tempo vertical */
 @media (max-width: 720px) {
   .app { grid-template-columns: minmax(0,1fr); gap: 12px; padding-block: 12px; }
-  .side { padding: 16px; }
+  .side { padding: 16px; order: 2; }
   .side .foot { display: none; }
   .filters { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
   .stage { min-height: 0; padding: 14px; }
@@ -229,6 +270,14 @@ button { font: inherit; color: inherit; }
       <div class="filter glass"><small>Modelo agora</small><div id="fModel">—</div></div>
       <div class="filter glass"><small>Painel</small><div id="fDecision">—</div></div>
       <div class="filter glass"><small>Sua conta na IQ</small><div id="fAccount">—</div></div>
+    </section>
+
+    <section class="livebar glass" id="live">
+      <div class="clock"><span class="onair" id="onair"><i></i>AO VIVO</span><span class="hms" id="hms">--:--:--</span><span class="age" id="age"></span></div>
+      <div class="pricebox"><div><div class="price" id="price">—</div><div class="pchg" id="pchg"></div></div><div class="spark" id="spark"></div></div>
+      <div class="odds"><div class="bar"><b id="bBuy" style="background:rgba(63,209,116,.35)"></b><span><span>Compra</span><strong id="tBuy">—</strong></span></div>
+        <div class="bar"><b id="bSell" style="background:rgba(239,75,75,.35)"></b><span><span>Venda</span><strong id="tSell">—</strong></span></div>
+        <div class="mkt" id="mkt"></div></div>
     </section>
 
     <section class="stage glass" id="viewHoje">
@@ -305,7 +354,10 @@ button { font: inherit; color: inherit; }
     return { demo: true, now, asset: "GBP/USD", stake: 10, start_balance: 10000,
       model: { p_up: .44, ts: now - 25, ready: true },
       decision: { action: "AGUARDE", text: "Aguarde" },
-      account: { type: "treino", balance: 10000, day: 0 }, wallets, entries, days };
+      account: { type: "treino", balance: 10000, day: 0 }, wallets, entries, days,
+      live: { ok: true, decimals: 5, price: 1.33461 + Math.sin(now / 7) * 0.00012,
+        ticks: Array.from({ length: 300 }, (_, i) => [now - 300 + i, 1.33461 + Math.sin((now - 300 + i) / 7) * 0.00012 + Math.sin(i / 40) * 0.0003]),
+        market: [["hoje", -0.71], ["ontem", 0.51], ["7 dias", -0.48], ["30 dias", 0.88], ["ano", 0.96]] } };
   }
 
   // ---------- desenho ----------
@@ -334,7 +386,8 @@ button { font: inherit; color: inherit; }
       $("fModel").textContent = m.note || "juntando histórico";
     }
     const d = s.decision || {};
-    $("fDecision").innerHTML = `<span class="big ${d.action === "COMPRA" ? "pos" : d.action === "VENDA" ? "neg" : ""}">${d.text || "—"}</span>`;
+    const fd = $("fDecision"); fd.innerHTML = `<span class="big ${d.action === "COMPRA" ? "pos" : d.action === "VENDA" ? "neg" : ""}">${d.text || "—"}</span>`;
+    fd.parentElement.classList.toggle("act-buy", d.action === "COMPRA"); fd.parentElement.classList.toggle("act-sell", d.action === "VENDA" || d.action === "SAIR");
     const a = s.account || {};
     $("fAccount").innerHTML = a.balance != null
       ? `${(a.type || "").toUpperCase()} <span class="big">$${a.balance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span> <span class="${cls(a.day || 0)}" style="font-size:12px">${a.day ? (a.day > 0 ? "GREEN " : "LOSS ") + brl(a.day).replace("R$ ", "$") : "hoje $0"}</span>`
@@ -391,13 +444,13 @@ button { font: inherit; color: inherit; }
     const cards = placed.slice().reverse().map(p => {
       const g = p.g, won = g.status === "ganhou", lost = g.status === "perdeu";
       const open = g.status === "aberta";
-      const left = Math.max(0, g.expiry_ts - now);
+      const left = Math.max(0, Math.floor(g.expiry_ts - now));
       const val = open ? `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`
         : g.profit == null ? "—" : `${g.profit > 0 ? "+" : g.profit < 0 ? "−" : ""}${Math.abs(g.profit).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
       const ws = g.wallets.map(k => `<i style="background:${COLORS[k]}">${k}</i>`).join("");
       const warn = (lost ? `<svg class="warn" viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="#ff6b6b"/><path d="M12 9v6M12 18v.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>` : "") + `<span class="ws">${ws}</span>`;
       const pin = won ? "#3fd174" : lost ? "#ef4b4b" : "#cfd8d3";
-      return `<article class="tcard${won ? " win" : lost ? " loss" : ""}" style="left:${p.left}px;top:${p.top}px;--pin:${pin}">
+      return `<article class="tcard${won ? " win" : lost ? " loss" : open ? " open" : ""}" style="left:${p.left}px;top:${p.top}px;--pin:${pin}">
         <div class="top"><span class="no">${g.side === "COMPRA" ? "▲" : "▼"} ${hhmm(g.ts)}</span>${warn}</div>
         <span class="val">${open ? "" : "<small>R$</small>"}${val}</span>
         <span class="meta">${open ? "aberta" : won ? "ganhou" : lost ? "perdeu" : g.status} · chance ${pc(g.chance)}</span></article>`;
@@ -434,11 +487,55 @@ button { font: inherit; color: inherit; }
   }
 
   let state = null;
+  let lastPrice = null;
+  function fmtPrice(p, dec) {
+    const t = p.toFixed(dec);
+    return dec >= 4 ? `${t.slice(0, -2)}<small>${t.slice(-2)}</small>` : t;
+  }
+  function renderLive(s) {
+    const L = s.live || {}, now = new Date();
+    $("hms").textContent = now.toLocaleTimeString("pt-BR");
+    const stale = s.stale || (!s.demo && !L.ok);
+    const oa = $("onair"); oa.classList.toggle("off", !!stale);
+    oa.lastChild.textContent = s.demo ? "EXEMPLO" : s.stale ? "PAROU DE LER" : L.ok ? "AO VIVO" : "LEITURA INCERTA";
+    $("age").textContent = s.stale ? `última leitura há ${s.stale} s` : s.asset ? `${s.asset} · lendo a tela da IQ` : "";
+    const dec = L.decimals || 5, ticks = L.ticks || [];
+    const pe = $("price");
+    if (L.price != null) {
+      pe.innerHTML = fmtPrice(L.price, dec);
+      if (lastPrice != null && L.price !== lastPrice) {
+        pe.classList.remove("up", "down"); void pe.offsetWidth; pe.classList.add(L.price > lastPrice ? "up" : "down");
+        setTimeout(() => pe.classList.remove("up", "down"), 700);
+      }
+      lastPrice = L.price;
+    } else pe.textContent = "—";
+    if (ticks.length > 1) {
+      const d = ticks[ticks.length - 1][1] - ticks[0][1], mins = Math.round((ticks[ticks.length - 1][0] - ticks[0][0]) / 60);
+      $("pchg").innerHTML = `<span class="${cls(d)}">${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(dec)}</span> em ${Math.max(1, mins)} min`;
+      const xs = ticks.map(t => t[0]), ys = ticks.map(t => t[1]);
+      const x0 = xs[0], x1 = xs[xs.length - 1] || x0 + 1, lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1e-9;
+      const W = 400, H = 56, pts = ticks.map(t => `${((t[0] - x0) / (x1 - x0 || 1) * W).toFixed(1)},${(H - 4 - (t[1] - lo) / span * (H - 8)).toFixed(1)}`);
+      const col = d >= 0 ? "#3fd174" : "#ef4b4b", last = pts[pts.length - 1].split(",");
+      $("spark").innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".28"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+        <polygon points="0,${H} ${pts.join(" ")} ${W},${H}" fill="url(#sg)"/>
+        <polyline points="${pts.join(" ")}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+        <circle cx="${last[0]}" cy="${last[1]}" r="3.5" fill="${col}"/></svg>`;
+    } else { $("pchg").textContent = "juntando preços..."; $("spark").innerHTML = ""; }
+    const m = s.model || {};
+    if (m.p_up != null) {
+      $("bBuy").style.width = (m.p_up * 100) + "%"; $("bSell").style.width = ((1 - m.p_up) * 100) + "%";
+      $("tBuy").textContent = pc(m.p_up); $("tSell").textContent = pc(1 - m.p_up);
+    } else { $("bBuy").style.width = $("bSell").style.width = "0"; $("tBuy").textContent = $("tSell").textContent = "—"; }
+    $("mkt").innerHTML = (L.market || []).map(([n, c]) => `<span>${n} <b class="${cls(c)}">${c >= 0 ? "▲" : "▼"}${Math.abs(c).toFixed(2).replace(".", ",")}%</b></span>`).join("")
+      || (L.market_note ? `<span>${L.market_note}</span>` : "");
+  }
+
   function render() {
     if (!state) return;
     $("viewHoje").hidden = view !== "hoje"; $("viewHist").hidden = view !== "historico";
     document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
-    renderSide(state); renderFilters(state);
+    renderSide(state); renderFilters(state); renderLive(state);
     if (view === "hoje") renderTimeline(state); else renderHist(state);
   }
   document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => {

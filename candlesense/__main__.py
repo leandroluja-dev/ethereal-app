@@ -543,7 +543,11 @@ def _publish_web(web, st, extras, dec) -> None:
             text, action = "Leitura incerta", ""
         else:
             text, action = "Aguarde", ""
-        web.publish(build_state(st, extras, text, action, url=getattr(web, "phone", None)))
+        state = build_state(st, extras, text, action, url=getattr(web, "phone", None))
+        state["live"] = {"ok": st.price is not None, "price": st.price, "decimals": st.decimals,
+                         "ticks": web.tick(st.now, st.asset, st.price),
+                         "market": [[n, c] for n, c in (extras.market or [])], "market_note": extras.market_note}
+        web.publish(state)
     except Exception as e:  # a página nunca derruba a leitura
         print(f"página: {e!r}", flush=True)
 
