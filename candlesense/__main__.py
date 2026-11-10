@@ -424,6 +424,14 @@ def cmd_live(args) -> int:
         strong = StrongMode(store.db)
     except Exception as e:
         print(f"modo medição indisponível: {e!r}", flush=True)
+    filler = None
+    if strong is not None and not args.sem_rede:
+        try:  # completa a fita de 1 min pela Twelve Data (chave da pessoa), em segundo plano
+            from .feeds.twelvedata import FitaFiller
+
+            filler = FitaFiller(Path(args.dados) / "candlesense.db", args.dados).start()
+        except Exception as e:
+            print(f"twelvedata indisponível: {e!r}", flush=True)
     extras = PanelExtras()
     wallet_view = None
     sides = None
@@ -492,6 +500,8 @@ def cmd_live(args) -> int:
                     last_learn = time.monotonic()
             except Exception as e:  # o histórico nunca derruba a leitura
                 print(f"histórico: {e!r}", flush=True)
+            if filler is not None:
+                filler.asset = asset
             if strong is not None:
                 try:
                     strong.update(r, asset)
@@ -682,6 +692,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--atraso", type=float, default=3.0,
                     help="seu tempo de reação em segundos (padrão 3): o aviso vem com essa folga")
     ap.add_argument("--sem-som", action="store_true", help="sem avisos sonoros")
+    ap.add_argument("--sem-rede", action="store_true", help="não busca velas na Twelve Data")
     ap.add_argument("--dados", default="dados", help="pasta do histórico (padrão ./dados)")
     ap.add_argument("--margem", type=float, default=2.0,
                     help="pontos percentuais acima do equilíbrio do payout para sinalizar (padrão 2)")
