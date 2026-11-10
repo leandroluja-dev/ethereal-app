@@ -126,3 +126,38 @@ def window_buttons(title: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def close_other_instances() -> int:
+    """Fecha outras cópias do CandleSense abertas (só pode existir uma janela)."""
+    import os
+    import signal
+    import time
+
+    if sys.platform == "win32":
+        return 0
+    try:
+        out = subprocess.run(["pgrep", "-f", "candlesense --app"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return 0
+    me = {os.getpid(), os.getppid()}
+    pids = [int(x) for x in out.split() if x.strip().isdigit() and int(x) not in me]
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + 3
+    for pid in pids:
+        while time.time() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.1)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    return len(pids)

@@ -1,7 +1,7 @@
 #!/bin/bash
 # CandleSense.app: abre o painel sem Terminal.
 # - atualiza o código (git pull) e as dependências quando mudarem;
-# - não abre duas vezes;
+# - nunca roda duas cópias: clicar de novo fecha a antiga e abre a nova;
 # - o log fica em candlesense.log, na pasta do projeto.
 APP="$(cd "$(dirname "$0")/../.." && pwd)"
 DIR="$(dirname "$APP")"
@@ -13,9 +13,11 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/Library/Frameworks/Python.framewo
 
 avisar() { osascript -e "display notification \"$1\" with title \"CandleSense\"" >/dev/null 2>&1; }
 
-if [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then
-  avisar "O CandleSense já está aberto."
-  exit 0
+# Clicar no ícone com o app aberto reabre com a versão nova: fecha as cópias antigas.
+if pgrep -f "candlesense --app" >/dev/null 2>&1; then
+  pkill -f "candlesense --app" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "candlesense --app" >/dev/null 2>&1 || break; sleep 0.3; done
+  pkill -9 -f "candlesense --app" 2>/dev/null
 fi
 
 # Log curto: guarda só o fim do anterior.
@@ -43,8 +45,8 @@ fi
 echo $$ > "$PIDF"
 .venv/bin/python -m candlesense --app >>"$LOG" 2>&1
 CODE=$?
-rm -f "$PIDF"
-if [ $CODE -ne 0 ] && [ $CODE -ne 2 ] && [ $CODE -ne 130 ]; then
+[ "$(cat "$PIDF" 2>/dev/null)" = "$$" ] && rm -f "$PIDF"
+if [ $CODE -ne 0 ] && [ $CODE -ne 2 ] && [ $CODE -ne 130 ] && [ $CODE -ne 143 ] && [ $CODE -ne 137 ]; then
   osascript -e 'display dialog "O CandleSense fechou com um erro. Os detalhes estão em candlesense.log, na pasta ethereal-app." with title "CandleSense" buttons {"OK"} default button "OK"' >/dev/null 2>&1
 fi
 exit 0

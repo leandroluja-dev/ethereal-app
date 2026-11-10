@@ -216,8 +216,11 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
 
 def cmd_live(args) -> int:
     if APP_MODE:
-        from .platform.appmode import hide_python_dock_icon
+        from .platform.appmode import close_other_instances, hide_python_dock_icon
 
+        n = close_other_instances()
+        if n:
+            print(f"fechei {n} cópia(s) antiga(s) do CandleSense", flush=True)
         hide_python_dock_icon()
     if not _check_platform():
         return 2
