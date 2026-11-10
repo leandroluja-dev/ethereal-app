@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS forte (
     p_up REAL NOT NULL, price REAL NOT NULL, payout INTEGER, out5 INTEGER,
     PRIMARY KEY (asset, start)
 );
+CREATE TABLE IF NOT EXISTS precos (
+    asset TEXT NOT NULL, ts INTEGER NOT NULL, price REAL NOT NULL,
+    PRIMARY KEY (asset, ts)
+);
 """
+
+MODES = ("5min", "candle5", "1min", "30s")
+KEEP_PRICES_S = 3 * 86400  # preço de cada segundo: só para conferir entradas de 30 s
 
 STRONG = 0.66  # "sinal forte": chance de 66% ou mais para um dos lados
 EVAL_AFTER_S = 3  # espera a vela recém-fechada assentar na tela
@@ -46,6 +53,12 @@ class StrongMode:
         self.model = model or ShapeModel()
         self.log = log
         self._done: set[tuple[str, int]] = set()
+        self._last_tick = 0
+        try:
+            self.db.execute("DELETE FROM precos WHERE ts<?", (int(time.time()) - KEEP_PRICES_S,))
+            self.db.commit()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------ fita
 
@@ -78,6 +91,22 @@ class StrongMode:
         self.db.executemany("INSERT OR IGNORE INTO fita VALUES (?,?,?,?,?,?,?)", rows[3:])
         return forming_start
 
+    def _store_price(self, r: ChartReading, asset: str, now: float) -> None:
+        """Preço da etiqueta, no máximo um por segundo (confere as entradas de 30 s)."""
+        sec = int(now)
+        if sec == self._last_tick or not r.ok or r.current_price is None or asset == "?" \
+                or "OTC" in asset.upper():
+            return
+        self._last_tick = sec
+        self.db.execute("INSERT OR REPLACE INTO precos VALUES (?,?,?)", (asset, sec, float(r.current_price)))
+
+    def price_at(self, asset: str, ts: float, tol: int = 3) -> Optional[float]:
+        """Preço lido mais perto do instante ``ts`` (até ``tol`` s de diferença)."""
+        row = self.db.execute("SELECT price FROM precos WHERE asset=? AND ts BETWEEN ? AND ? "
+                              "ORDER BY ABS(ts-?) LIMIT 1",
+                              (asset, int(ts) - tol, int(ts) + tol, int(ts))).fetchone()
+        return row[0] if row else None
+
     def bars(self, asset: str, last_start: int, n: int = MIN_HISTORY) -> list[Bar]:
         cur = self.db.execute(
             "SELECT start, open, high, low, close FROM fita WHERE asset=? AND start<=? AND start>? ORDER BY start",
@@ -90,6 +119,7 @@ class StrongMode:
         """Chamado a cada leitura. Devolve a chance de subir quando calcula uma nova."""
         now = time.time() if now is None else now
         forming = self._store_bars(r, asset, now)
+        self._store_price(r, asset, now)
         self.resolve()
         self.db.commit()
         if forming is None or asset == "?" or "OTC" in asset.upper():
@@ -184,7 +214,8 @@ class StrongMode:
     # ------------------------------------------------------------ telas do simulador
 
     def entries(self, since: float = 0.0, threshold: float = 0.62, stake: float = 10.0,
-                min_payout: int = 80, now: Optional[float] = None, candle5: bool = False) -> list[dict]:
+                min_payout: int = 80, now: Optional[float] = None, candle5: bool = False,
+                mode: str = "5min") -> list[dict]:
         """Entradas virtuais do simulador, uma por medição acima do corte (mais antiga primeiro).
 
         Mesmas regras de ``simulate``. Cada entrada traz: asset, start, ts, side
@@ -196,8 +227,15 @@ class StrongMode:
         vela de 5 min do relógio, com pelo menos 2 min pela frente, e vence no fechamento
         dela, como a expiração da IQ. Conferida pela fita. A chance é a mesma conta de
         5 min à frente, então para prazos menores ela é só uma aproximação.
+
+        ``mode``: "5min" (padrão), "candle5" (o mesmo que ``candle5=True``), "1min"
+        (vence no fechamento da vela de 1 min seguinte, conferida pela fita) ou "30s"
+        (vence 30 s depois da conta, conferida pelo preço lido na tela a cada segundo).
+        Os dois últimos são carteiras de risco: a conta do modelo é de 5 min.
         """
         now = time.time() if now is None else now
+        if candle5:
+            mode = "candle5"
         rows = self.db.execute(
             "SELECT asset, start, ts, p_up, price, payout, out5 FROM forte WHERE ts>=? ORDER BY ts",
             (since,)).fetchall()
@@ -211,7 +249,21 @@ class StrongMode:
             side = "COMPRA" if p >= 0.5 else "VENDA"
             gain = stake * pay / 100.0
             expiry = start + 360  # fecha a vela start+300: 5 min depois da entrada
-            if candle5:
+            if mode == "1min":
+                expiry = start + 120
+                row = self.db.execute("SELECT close, updated FROM fita WHERE asset=? AND start=?",
+                                      (asset, start + 60)).fetchone()
+                res = None
+                if row is not None and row[1] >= expiry + 10:
+                    res = 1 if row[0] > price else 0 if row[0] < price else -1
+            elif mode == "30s":
+                expiry = int(ts) + 30
+                p0 = self.price_at(asset, ts)
+                if p0 is not None:
+                    price = p0
+                p1 = self.price_at(asset, expiry) if now >= expiry + 3 else None
+                res = None if p1 is None else 1 if p1 > price else 0 if p1 < price else -1
+            elif mode == "candle5":
                 enter = start + 60
                 expiry = (enter // 300 + 1) * 300
                 if expiry - enter < 120:
@@ -222,7 +274,8 @@ class StrongMode:
                 if row is not None and row[1] >= expiry + 10:
                     res = 1 if row[0] > price else 0 if row[0] < price else -1
             if res is None:
-                status = "aberta" if now < expiry + 120 else "sem leitura"
+                wait = 15 if mode == "30s" else 120
+                status = "aberta" if now < expiry + wait else "sem leitura"
                 profit = None
             elif res == -1:
                 status, profit = "empate", 0.0
@@ -232,7 +285,7 @@ class StrongMode:
                 status, profit = "perdeu", -stake
             out.append({"asset": asset, "start": start, "ts": ts, "side": side, "chance": max(p, 1 - p),
                         "price": price, "payout": pay, "stake": stake, "gain": gain, "expiry_ts": expiry,
-                        "status": status, "profit": profit})
+                        "status": status, "profit": profit, "mode": mode})
         return out
 
     def history_minutes(self, asset: str, now: Optional[float] = None) -> int:

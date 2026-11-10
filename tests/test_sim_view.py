@@ -55,13 +55,13 @@ def test_candle5_expires_at_end_of_5min_candle():
 
 def test_by_band_and_merged():
     sm = _sm()
-    st = SimState(entries={w.key: sm.entries(threshold=w.cut, now=T0 + 300, candle5=w.candle5) for w in WALLETS},
+    st = SimState(entries={w.key: sm.entries(threshold=w.cut, now=T0 + 300, mode=w.mode) for w in WALLETS},
                   now=T0 + 300)
-    names = [n for n, _ in by_band(st.get("C"))]
+    names = [n for n, _ in by_band(st.get("B"))]
     assert names == ["58–60%", "64–66%", "70% ou mais"]
     rows = merged(st)
     first = [r for r in rows if r["start"] == T0 and not r.get("expiry_ts") == T0 + 300]
-    assert {w.key for w in first[0]["wallets"]} == {"A", "C"}
+    assert {w.key for w in first[0]["wallets"]} == {"A", "B"}
 
 
 def test_live_result_needs_same_pair():
@@ -84,13 +84,13 @@ def test_history_minutes_and_last_measure():
 
 def test_side_screens_have_requested_height():
     sm = _sm()
-    ent = {w.key: sm.entries(threshold=w.cut, now=T0 + 300, candle5=w.candle5) for w in WALLETS}
+    ent = {w.key: sm.entries(threshold=w.cut, now=T0 + 300, mode=w.mode) for w in WALLETS}
     ent["A"][0]["seen_at"] = T0 + 290
     for st in (SimState(entries=ent, now=T0 + 300, asset="GBP/USD", price=1.2001, hist_min=135),
                SimState(hist_min=40), SimState(available=False), SimState(note="OTC"),
                SimState(now=T0 + 300, hist_min=135, last_p=0.43, last_ts=T0 + 250)):
-        img = side_screens(st, 940)
-        assert img.shape[0] == 940 and img.shape[1] > 700 and img.std() > 5
+        img = side_screens(st, 1000)
+        assert img.shape[0] == 1000 and img.shape[1] > 700 and img.std() > 5
     big = {k: v * 10 for k, v in ent.items()}
     assert side_screens(SimState(entries=big, now=T0 + 300), 1300, scale=1.3).shape[0] == 1300
 
@@ -112,3 +112,32 @@ def test_sounds_are_short_wavs(tmp_path):
         with wave.open(str(p)) as w:
             secs = w.getnframes() / w.getframerate()
         assert 0.2 < secs < 1.2
+
+
+def test_one_minute_and_thirty_second_risk_wallets():
+    sm = _sm()
+    # 1 min: a conta da vela T0 (compra 70% a 1.1) vence no fechamento da vela T0+60
+    sm.db.execute("INSERT INTO fita VALUES ('EUR/USD', ?, 1, 1, 1, 1.05, ?)", (T0 + 60, T0 + 135))
+    es = {e["start"]: e for e in sm.entries(threshold=0.55, now=T0 + 140, mode="1min")}
+    assert es[T0]["expiry_ts"] == T0 + 120 and es[T0]["status"] == "perdeu"
+    assert es[T0 + 60]["status"] == "aberta"
+    # 30 s: preço lido na tela no instante da conta e 30 s depois
+    sm.db.executemany("INSERT INTO precos VALUES (?,?,?)",
+                      [("EUR/USD", T0 + 65, 1.1000), ("EUR/USD", T0 + 96, 1.1003),
+                       ("EUR/USD", T0 + 125, 1.1000), ("EUR/USD", T0 + 154, 1.0990)])
+    es = {e["start"]: e for e in sm.entries(threshold=0.55, now=T0 + 160, mode="30s")}
+    assert es[T0]["expiry_ts"] == T0 + 95 and es[T0]["status"] == "ganhou"   # compra, subiu
+    assert es[T0 + 60]["status"] == "ganhou"                                 # venda, caiu
+    assert es[T0 + 120]["status"] == "aberta"                               # vence em T0+215
+
+
+def test_screen_price_stored_once_per_second():
+    from types import SimpleNamespace
+
+    sm = _sm()
+    r = SimpleNamespace(ok=True, current_price=1.2345)
+    for now in (T0 + 0.1, T0 + 0.6, T0 + 1.2):
+        sm._store_price(r, "EUR/USD", now)
+    assert sm.db.execute("SELECT COUNT(*) FROM precos").fetchone()[0] == 2
+    assert sm.price_at("EUR/USD", T0 + 2) == 1.2345
+    assert sm.price_at("EUR/USD", T0 + 9) is None

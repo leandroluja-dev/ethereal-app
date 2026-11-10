@@ -1,13 +1,13 @@
-"""Telas ao lado do painel: as três carteiras do simulador (entradas de mentira).
+"""Telas ao lado do painel: as carteiras do simulador (entradas de mentira).
 
-* Tela do meio, "Carteiras do app": três carteiras empilhadas, cada uma com cor e
+* Tela do meio, "Carteiras do app": cinco carteiras empilhadas (A 62%, B 58% e três de risco a 55%: vela de 5 min, vela de 1 min e 30 s), cada uma com cor e
   letra próprias. Mostra a entrada aberta ao vivo (valor, quanto ganha, ganhando ou
   perdendo, quanto falta), o aviso de GANHOU / PERDEU, o resultado de hoje e as
   últimas entradas.
     A  Segura         entra a partir de 62%, vence em 5 min
     B  Vela de 5 min  experimento: entra durante a vela de 5 min (60%), vence no fim dela
     C  Moderada       entra a partir de 58%, vence em 5 min
-* Tela da direita, "Resultados do dia": as três lado a lado, pela chance que a entrada
+* Tela da direita, "Resultados do dia": todas comparadas, pela chance que a entrada
   mostrava e a lista de todas as entradas de hoje com a letra da carteira.
 
 O app nunca clica nem opera na IQ Option. Mesmo visual do painel.
@@ -27,7 +27,7 @@ from .panel import (BLACK, CARD, CARD_2, DIM, FAINT, FG, GAP, GREEN, LINE, ORANG
 BLUE = (88, 160, 255)
 GAP_PX = 6        # faixa preta entre as telas (pixels de saída, antes da escala)
 FLASH_S = 25      # o aviso de GANHOU / PERDEU fica este tempo
-MIN_HEIGHT = 940  # altura mínima da janela com as carteiras (unidades do painel)
+MIN_HEIGHT = 1000 # altura mínima da janela com as carteiras (unidades do painel)
 WEEK = ("segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo")
 BANDS = ((0.58, 0.60), (0.60, 0.62), (0.62, 0.64), (0.64, 0.66), (0.66, 0.70), (0.70, 1.01))
 
@@ -40,13 +40,24 @@ class WalletSpec:
     color: tuple
     desc: str
     tag: str
-    candle5: bool = False
+    mode: str = "5min"  # 5min, candle5, 1min ou 30s (ver StrongMode.entries)
 
+    @property
+    def candle5(self) -> bool:
+        return self.mode == "candle5"
+
+
+PURPLE = (176, 122, 255)
+PINK = (255, 112, 166)
+RISK_CUT = 0.55
 
 WALLETS = (
     WalletSpec("A", "Segura", 0.62, GREEN, "a partir de 62% · vence em 5 min", "62%"),
-    WalletSpec("B", "Vela de 5 min", 0.60, ORANGE, "durante a vela de 5 min · 60%", "EXPERIMENTO", candle5=True),
-    WalletSpec("C", "Moderada", 0.58, BLUE, "a partir de 58% · vence em 5 min", "58%"),
+    WalletSpec("B", "Moderada", 0.58, BLUE, "a partir de 58% · vence em 5 min", "58%"),
+    WalletSpec("C", "Vela de 5 min", RISK_CUT, ORANGE, "55% · vence no fim da vela de 5 min", "RISCO",
+               mode="candle5"),
+    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "55% · vence no fim da próxima vela", "RISCO", mode="1min"),
+    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "55% · entra e sai em 30 segundos", "RISCO", mode="30s"),
 )
 
 
@@ -133,7 +144,7 @@ def merged(st: SimState) -> list:
     rows: dict = {}
     for spec in WALLETS:
         for e in st.get(spec.key):
-            r = rows.setdefault((e["asset"], e["start"], spec.candle5), dict(e, wallets=[]))
+            r = rows.setdefault((e["asset"], e["start"], spec.mode), dict(e, wallets=[]))
             r["wallets"].append(spec)
     return sorted(rows.values(), key=lambda e: e["ts"])
 
@@ -282,27 +293,27 @@ def _fit(c: _Canvas, height: float) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def render_wallets(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
-    """Tela do meio: as três carteiras, uma embaixo da outra."""
+    """Tela do meio: as carteiras, uma embaixo da outra (as de risco por último)."""
     c = _Canvas(scale, height=int(height) + 40)
     _head(c, "Carteiras do app", f"{brl(st.stake, False)} por entrada · conta de mentira")
     bottom = _footer(c, height, "Simulação: o app nunca clica nem opera.")
     top = c.u
-    bh = (bottom - top - 2 * GAP) / 3
+    bh = (bottom - top - (len(WALLETS) - 1) * GAP) / len(WALLETS)
     for i, spec in enumerate(WALLETS):
         _wallet_band(c, spec, st, top + i * (bh + GAP), bh)
     return _fit(c, height)
 
 
 def render_day(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
-    """Tela da direita: as três carteiras comparadas, pela chance mostrada e entrada por entrada."""
+    """Tela da direita: as carteiras comparadas, pela chance mostrada e entrada por entrada."""
     c = _Canvas(scale, height=int(height) + 40)
     lt = time.localtime(st.now or time.time())
     _head(c, "Resultados do dia", f"{WEEK[lt.tm_wday]}, {lt.tm_mday:02d}/{lt.tm_mon:02d} · desde 00:00")
     bottom = _footer(c, height, "Simulação: o app nunca clica nem opera.")
     inner, right = PAD + 16, W - PAD - 16
-    # as três carteiras
-    y0, rh = c.u, 58
-    c.card(y0, y0 + 3 * rh + 8)
+    # as carteiras
+    y0, rh = c.u, 46
+    c.card(y0, y0 + len(WALLETS) * rh + 8)
     for i, spec in enumerate(WALLETS):
         s = day_summary(st.get(spec.key))
         y = y0 + 4 + i * rh
@@ -314,9 +325,9 @@ def render_day(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
         c.at(inner + 30, y + rh / 2 + 10, f"{s['n']} entradas · {acc}", 12, DIM, anchor="lm")
         c.at(right, y + rh / 2, brl(s["profit"]) if s["done"] else "R$ 0,00", 18, _col(s["profit"]), "bold",
              anchor="rm")
-    c.y = c.px(y0 + 3 * rh + 8 + GAP)
-    # pela chance (entradas de 5 min: a carteira C contém as da A)
-    bands = by_band(st.get("C"))
+    c.y = c.px(y0 + len(WALLETS) * rh + 8 + GAP)
+    # pela chance (entradas de 5 min: a carteira B contém as da A)
+    bands = by_band(st.get("B"))
     if bands and bottom - c.u > 120:
         _label(c, "PELA CHANCE QUE A ENTRADA MOSTRAVA")
         y0, row_h = c.u, 28
@@ -383,7 +394,7 @@ class SideScreens:
         self._img: Optional[np.ndarray] = None
 
     def height(self, panel_px: int) -> int:
-        """Altura da janela com as carteiras: a do painel ou a mínima das três carteiras."""
+        """Altura da janela com as carteiras: a do painel ou a mínima das carteiras."""
         return max(panel_px, int(round(MIN_HEIGHT * self.scale)))
 
     def image(self, height_px: int) -> Optional[np.ndarray]:

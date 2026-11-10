@@ -245,7 +245,7 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
 
 
 def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
-    """As três carteiras do simulador para as telas ao lado do painel, com som quando sai resultado."""
+    """As carteiras do simulador para as telas ao lado do painel, com som quando sai resultado."""
     from .alerts import play
     from .history.wallet import day_start
     from .ui.sim_view import WALLETS, SimState
@@ -257,7 +257,7 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
     sound = None
     all_entries = {}
     for spec in WALLETS:
-        entries = strong.entries(day_start(now), threshold=spec.cut, now=now, candle5=spec.candle5)
+        entries = strong.entries(day_start(now), threshold=spec.cut, now=now, mode=spec.mode)
         for e in entries:
             k = (spec.key, e["asset"], e["start"])
             before = seen.get(k)
