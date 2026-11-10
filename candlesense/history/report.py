@@ -8,7 +8,8 @@
   vela e por expiração, e as últimas operações;
 * histórico por dia (com saldo de abertura e fechamento) e o total de sempre;
 * placar do app: sinais que ele deu hoje e quantos acertou, e o acerto das
-  entradas que seguiram o app.
+  entradas que seguiram o app;
+* qual tempo de vela (1, 2, 5 min...) tem dado mais certo (``timeframes``).
 
 Só lê o SQLite e o estado do ``WalletTracker``: não desenha nada.
 """
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .store import Store
+from .timeframes import TimeframeAdvice, compare
 from .wallet import AccountDay, WalletTracker, day_start, summarize
 
 
@@ -64,6 +66,7 @@ class WalletReport:
     all_time: Optional[AccountDay] = None
     app_today: AppScore = field(default_factory=AppScore)
     app_7d: AppScore = field(default_factory=AppScore)
+    timeframes: Optional[TimeframeAdvice] = None         # melhor tempo de vela pelo histórico (30 dias)
 
     @property
     def label(self) -> str:
@@ -105,6 +108,9 @@ def wallet_report(store: Store, wallet: Optional[WalletTracker], account: Option
         last = store.balances()
         acc = last[-1][1] if last else None
     rep = WalletReport(account=acc, balance=(wallet.balance.get(acc) if wallet and acc else None))
+    month = now - 30 * 86400
+    rep.timeframes = compare(store.signals(since=month), store.predictions(since=month),
+                             store.trades(since=month))
     if acc is None:
         return rep
     if rep.balance is None:

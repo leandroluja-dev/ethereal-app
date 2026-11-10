@@ -195,6 +195,7 @@ def test_report_without_balance():
 
     rep = wallet_report(Store(":memory:"), None)
     assert rep.account is None and rep.today is None
+    assert rep.timeframes is not None and rep.timeframes.best is None
 
 
 def test_parse_money_ignores_menu_arrow_and_cursor():
