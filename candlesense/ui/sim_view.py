@@ -58,9 +58,14 @@ WALLETS = (
     WalletSpec("B", "Moderada", 0.58, BLUE, "58% · vence em 5 min", "58%"),
     WalletSpec("C", "Vela de 5 min", RISK_CUT, ORANGE, "58% · fim da vela de 5 min", "RISCO",
                mode="candle5"),
-    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "58% · fim da vela de 1 min", "RISCO", mode="1min"),
-    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "58% · sai em 30 s", "RISCO", mode="30s"),
 )
+# Saíram em 10/11/2026 18h20 (1 min e 30 s não têm vantagem nos testes): só aparecem no histórico.
+RETIRED = (
+    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "saiu em 10/11", "RISCO", mode="1min"),
+    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "saiu em 10/11", "RISCO", mode="30s"),
+)
+# A partir daqui só entra com o payout lido (ou lido há menos de 10 min) e com chance acima do empate.
+PAYOUT_RULE_SINCE = __import__("time").mktime((2026, 11, 10, 18, 20, 0, 0, 0, -1))
 
 
 @dataclass

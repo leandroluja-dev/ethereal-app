@@ -291,7 +291,7 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
     """As carteiras do simulador para as telas ao lado do painel, com som quando sai resultado."""
     from .alerts import play
     from .history.wallet import day_start
-    from .ui.sim_view import OLD_RISK_CUT, RISK_CUT, RISK_CUT_SINCE, WALLETS, SimState
+    from .ui.sim_view import OLD_RISK_CUT, PAYOUT_RULE_SINCE, RISK_CUT, RISK_CUT_SINCE, WALLETS, SimState
 
     now = time.time()
     first = sim.state is None
@@ -302,10 +302,12 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
     for spec in WALLETS:
         if spec.tag == "RISCO" and now - RISK_CUT_SINCE < 86400 * 2:
             # o corte subiu de 55% para 58% às 18h05 de 10/11: as entradas de antes continuam como foram
-            entries = [e for e in strong.entries(day_start(now), threshold=OLD_RISK_CUT, now=now, mode=spec.mode)
+            entries = [e for e in strong.entries(day_start(now), threshold=OLD_RISK_CUT, now=now, mode=spec.mode,
+                                                 payout_rule_since=PAYOUT_RULE_SINCE)
                        if e["start"] < RISK_CUT_SINCE or e["chance"] >= RISK_CUT]
         else:
-            entries = strong.entries(day_start(now), threshold=spec.cut, now=now, mode=spec.mode)
+            entries = strong.entries(day_start(now), threshold=spec.cut, now=now, mode=spec.mode,
+                                     payout_rule_since=PAYOUT_RULE_SINCE)
         for e in entries:
             k = (spec.key, e["asset"], e["start"])
             before = seen.get(k)

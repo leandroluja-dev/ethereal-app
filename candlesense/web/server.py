@@ -69,7 +69,7 @@ def _group(entries: dict) -> list:
 def build_state(st, extras=None, decision_text: str = "", decision_action: str = "",
                 url: Optional[str] = None) -> dict:
     """O que a página mostra, a partir do estado das telas do simulador (SimState)."""
-    from ..ui.sim_view import WALLETS, day_summary
+    from ..ui.sim_view import RETIRED, WALLETS, day_summary
     from ..history.simbook import START_BALANCE
 
     bal = st.balances()
@@ -96,6 +96,7 @@ def build_state(st, extras=None, decision_text: str = "", decision_action: str =
         "start_balance": START_BALANCE, "url": url,
         "model": {"p_up": st.last_p, "ts": st.last_ts, "ready": ready, "note": need},
         "decision": {"action": decision_action, "text": decision_text},
+        "retired": [{"key": w.key, "name": w.name} for w in RETIRED],
         "app_wallet": app_wallet, "wallets": wallets, "entries": _group(st.entries), "days": st.days(),
     }
 

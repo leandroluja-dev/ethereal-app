@@ -164,3 +164,17 @@ def test_dragging_window_corner_changes_scale(monkeypatch):
     clock[0] += 0.5; w._watch_user_resize()          # soltou
     assert w.pop_scale_change() == 1.5 and w.scale == 1.5
     assert w.set_scale(9) and w.scale == 2.5
+
+
+def test_payout_rule_skips_unknown_or_low_payout():
+    db = sqlite3.connect(":memory:")
+    sm = StrongMode(db, log=lambda *a, **k: None)
+    rows = [("EUR/USD", T0, T0 + 5, 0.70, 1.1, 89, 1),             # payout lido: entra
+            ("EUR/USD", T0 + 60, T0 + 65, 0.70, 1.1, None, 1),     # usa o de 1 min atrás
+            ("GBP/USD", T0 + 120, T0 + 125, 0.70, 1.2, None, 1),   # nenhum payout do par: fora
+            ("EUR/USD", T0 + 900, T0 + 905, 0.60, 1.1, 60, 1)]     # 60% exige 62,5%: fora
+    db.executemany("INSERT INTO forte VALUES (?,?,?,?,?,?,?)", rows)
+    es = sm.entries(threshold=0.58, now=T0 + 2000, payout_rule_since=T0)
+    assert [e["start"] for e in es] == [T0, T0 + 60]
+    assert es[1]["payout"] == 89
+    assert len(sm.entries(threshold=0.58, now=T0 + 2000)) == 3  # sem a regra (payout 60 já ficava fora)

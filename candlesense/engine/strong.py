@@ -215,7 +215,7 @@ class StrongMode:
 
     def entries(self, since: float = 0.0, threshold: float = 0.62, stake: float = 10.0,
                 min_payout: int = 80, now: Optional[float] = None, candle5: bool = False,
-                mode: str = "5min") -> list[dict]:
+                mode: str = "5min", payout_rule_since: Optional[float] = None) -> list[dict]:
         """Entradas virtuais do simulador, uma por medição acima do corte (mais antiga primeiro).
 
         Mesmas regras de ``simulate``. Cada entrada traz: asset, start, ts, side
@@ -243,6 +243,16 @@ class StrongMode:
         for asset, start, ts, p, price, payout, res in rows:
             if not (p >= threshold or p <= 1 - threshold):
                 continue
+            if payout_rule_since is not None and ts >= payout_rule_since:
+                # só entra sabendo o payout (o lido agora ou o último lido há menos de 10 min)
+                # e com a chance acima do empate desse payout
+                if not payout:
+                    row = self.db.execute("SELECT payout FROM forte WHERE asset=? AND payout IS NOT NULL "
+                                          "AND ts<=? AND ts>=? ORDER BY ts DESC LIMIT 1",
+                                          (asset, ts, ts - 600)).fetchone()
+                    payout = row[0] if row else None
+                if not payout or max(p, 1 - p) < 1.0 / (1.0 + payout / 100.0):
+                    continue
             pay = payout if payout else 86
             if pay < min_payout:
                 continue

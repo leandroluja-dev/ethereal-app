@@ -552,7 +552,7 @@ button { font: inherit; color: inherit; }
     $("dTitle").textContent = (isToday ? "Hoje, " : "") + dt.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
     const t = info ? dayTotals(info) : { n: 0, wins: 0, losses: 0, profit: 0 };
     $("dSub").innerHTML = t.n ? `<b class="${cls(t.profit)}" style="font-size:16px">${brl(t.profit)}</b> · ${t.n} entradas · ${t.wins} ganhos, ${t.losses} perdas${t.wins + t.losses ? " · " + Math.round(100 * t.wins / (t.wins + t.losses)) + "% de acerto" : ""}` : "nenhuma entrada neste dia";
-    $("dWallets").innerHTML = info ? s.wallets.filter(w => info.w[w.key]).map(w => { const x = info.w[w.key];
+    $("dWallets").innerHTML = info ? s.wallets.concat(s.retired || []).filter(w => info.w[w.key]).map(w => { const x = info.w[w.key];
       return `<span><i style="background:${COLORS[w.key]}"></i>${w.key} · ${w.name} <b class="${cls(x.profit)}">${brl(x.profit)}</b> <span style="color:var(--dim)">${x.wins}G ${x.losses}P</span></span>`; }).join("") : "";
     let list;
     if (isToday) list = s.entries;
