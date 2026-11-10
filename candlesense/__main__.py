@@ -240,6 +240,8 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
     if key == ord("g"):
         extras.chart = not extras.chart
         act = "redesenhar"
+    if getattr(panel, "pop_hover_change", lambda: False)():
+        act = "redesenhar"  # mouse sobre o botão: muda a cor na hora
     if (key == ord("c") or panel.pop_click() == "carteira") and wallet_view is not None:
         wallet_view.toggle()
         act = "redesenhar"

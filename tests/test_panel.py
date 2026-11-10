@@ -96,3 +96,24 @@ def test_panel_input_toggles_right_away(monkeypatch):
     assert m._panel_input(p, wv, ex) is None
     monkeypatch.setattr(m.cv2, "waitKey", lambda ms: ord("q"))
     assert m._panel_input(p, wv, ex) == "sair"
+
+
+def test_button_hover_and_press_change_look():
+    """Mouse em cima e clique mudam a cor do botão Carteira."""
+    import numpy as np
+
+    from candlesense.ui import panel as pn
+
+    r = reading(candles_from_path(zigzag_up()), timeframe=60)
+    d = RuleEngine().evaluate(r)
+    ex = pn.PanelExtras()
+    x1, y1, x2, y2 = pn.BUTTONS["carteira"]
+    looks = []
+    try:
+        for st in (None, "hover", "down"):
+            pn.BUTTON_STATE["carteira"] = st
+            img = render(d, r, extras=ex)
+            looks.append(img[int(y1) + 3:int(y2) - 3, int(x1) + 12:int(x1) + 20].mean())
+    finally:
+        pn.BUTTON_STATE["carteira"] = None
+    assert looks[0] < looks[1] < looks[2]
