@@ -707,6 +707,12 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(levelname)s %(name)s: %(message)s")
     global APP_MODE
     APP_MODE = bool(args.app)
+    if APP_MODE:  # log em arquivo: cada linha sai na hora (antes ficava presa até a primeira leitura)
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(line_buffering=True)
+            except Exception:
+                pass
     func = getattr(args, "func", cmd_live)
     return func(args)
 
