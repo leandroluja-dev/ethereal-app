@@ -71,3 +71,28 @@ def test_open_trade_live_result():
     r = reading(candles_from_path(zigzag_up()), timeframe=60)
     img = render(RuleEngine().evaluate(r), r, extras=PanelExtras(wallet_n=1, open_trade=t, exit_alert="virou"))
     assert img.shape[1] == W
+
+
+def test_panel_input_toggles_right_away(monkeypatch):
+    """Clique no botão Carteira pede redesenho na hora, sem esperar a próxima leitura."""
+    import candlesense.__main__ as m
+    from candlesense.ui.panel import PanelExtras
+    from candlesense.ui.wallet_view import WalletWindow
+
+    class FakePanel:
+        def __init__(self):
+            self.click = "carteira"
+
+        def pop_click(self):
+            c, self.click = self.click, None
+            return c
+
+        def is_open(self):
+            return True
+
+    monkeypatch.setattr(m.cv2, "waitKey", lambda ms: -1)
+    p, wv, ex = FakePanel(), WalletWindow(), PanelExtras()
+    assert m._panel_input(p, wv, ex) == "redesenhar" and wv.visible
+    assert m._panel_input(p, wv, ex) is None
+    monkeypatch.setattr(m.cv2, "waitKey", lambda ms: ord("q"))
+    assert m._panel_input(p, wv, ex) == "sair"
