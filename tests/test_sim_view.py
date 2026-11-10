@@ -89,3 +89,11 @@ def test_sounds_are_short_wavs(tmp_path):
         with wave.open(str(p)) as w:
             secs = w.getnframes() / w.getframerate()
         assert 0.2 < secs < 1.2
+
+
+def test_last_measure_and_waiting_card():
+    sm = _sm()
+    assert sm.last_measure("GBP/USD") == (T0 + 245, 0.64)
+    assert sm.last_measure("AUD/USD") is None
+    img = side_screens(SimState(now=T0 + 300, asset="EUR/USD", hist_min=135, last_p=0.43, last_ts=T0 + 250), 700)
+    assert img.shape[0] == 700

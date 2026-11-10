@@ -42,11 +42,13 @@ class SimState:
     available: bool = True               # simulador ligado
     stake: float = 10.0
     threshold: float = 0.62
+    last_p: Optional[float] = None       # última chance de subir calculada pelo modelo neste par
+    last_ts: Optional[float] = None
 
     def key(self) -> tuple:
         """Muda quando algo na tela muda (para não redesenhar à toa)."""
         live = tuple((e["start"], e["status"], e.get("seen_at")) for e in self.entries)
-        return (live, int(self.now), self.asset, self.price, self.hist_min, self.note, self.available)
+        return (live, int(self.now), self.asset, self.price, self.hist_min, self.note, self.available, self.last_ts)
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +224,28 @@ def _waiting_card(c: _Canvas, st: SimState) -> None:
         msg = (f"Juntando histórico do gráfico de 1 min: {st.hist_min} de {st.hist_need} min. "
                "Deixe o gráfico aberto neste par.")
     else:
-        msg = f"O app entra sozinho quando a chance passa de {_pc(st.threshold)}. Expiração de 5 min."
+        msg = f"O app entra sozinho quando a chance chega a {_pc(st.threshold)}. Expiração de 5 min."
+    fresh = (st.available and not st.note and st.last_p is not None and st.last_ts is not None
+             and st.now - st.last_ts < 180)
+    if fresh:
+        side = "compra" if st.last_p >= 0.5 else "venda"
+        ch = max(st.last_p, 1 - st.last_p)
+        msg = (f"Última conta do modelo ({_hhmm(st.last_ts)}): {side} {_pc(ch)}. "
+               f"Ele entra a partir de {_pc(st.threshold)}.")
     c.para(msg, 13, DIM, x=inner, width=W - 2 * inner, gap=6)
+    if fresh:
+        # barra de 50% a 75%: onde a última conta ficou e a marca do corte
+        by = y0 + h - 20
+        lo, hi = 0.5, 0.75
+        span = W - 2 * inner
+        c.rrect(inner, by, W - inner, by + 6, 3, fill=CARD_2)
+        f = max(0.0, min(1.0, (ch - lo) / (hi - lo)))
+        if f > 0:
+            c.rrect(inner, by, inner + span * f, by + 6, 3, fill=GREEN if ch >= st.threshold else DIM)
+        mx = inner + span * (st.threshold - lo) / (hi - lo)
+        c.d.line([(c.px(mx), c.px(by - 4)), (c.px(mx), c.px(by + 10))], fill=FG, width=c.px(1.5))
+        c.y = c.px(y0 + h + GAP)
+        return
     if st.available and not st.note and st.hist_min is not None and st.hist_min < st.hist_need:
         by = y0 + h - 20
         c.rrect(inner, by, W - inner, by + 6, 3, fill=CARD_2)

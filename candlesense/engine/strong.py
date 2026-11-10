@@ -225,3 +225,9 @@ class StrongMode:
                 break
             n, prev = n + 1, s
         return n
+
+    def last_measure(self, asset: str) -> Optional[tuple[float, float]]:
+        """Última conta do modelo neste par: (ts, chance de subir), mesmo abaixo do corte."""
+        row = self.db.execute("SELECT ts, p_up FROM forte WHERE asset=? ORDER BY start DESC LIMIT 1",
+                              (asset,)).fetchone()
+        return (row[0], row[1]) if row else None

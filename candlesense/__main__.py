@@ -276,9 +276,11 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
     elif r.ok and r.timeframe_s and r.timeframe_s != 60:
         note = "O app só entra no gráfico de 1 min. Mude a vela para 1 min para ele medir."
     hist = strong.history_minutes(asset, now) if asset and asset != "?" else None
+    last = strong.last_measure(asset) if asset and asset != "?" else None
     sim.state = SimState(entries=entries, now=now, asset=asset if asset != "?" else None,
                          price=r.current_price if r.ok else None,
-                         decimals=r.scale.decimals if r.scale else 5, hist_min=hist, note=note)
+                         decimals=r.scale.decimals if r.scale else 5, hist_min=hist, note=note,
+                         last_p=last[1] if last else None, last_ts=last[0] if last else None)
 
 
 def _show_panel(panel, dec, r, extras, wallet_view, sides=None) -> None:
