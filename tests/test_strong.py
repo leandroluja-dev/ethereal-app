@@ -105,3 +105,16 @@ def test_simulator_counts_virtual_entries():
     assert (s["entradas"], s["ganhos"], s["perdas"], s["empates"]) == (4, 2, 1, 1)
     assert abs(s["lucro"] - (8.6 - 10 + 9)) < 1e-9
     assert "R$ +7.60" in sm.day_text(0)
+
+
+def test_fita_without_timer_uses_clock():
+    """Modo Blitz: sem cronômetro na tela, a vela em formação é a do minuto do relógio."""
+    db = sqlite3.connect(":memory:")
+    sm = StrongMode(db, log=lambda *a, **k: None)
+    r = _reading(300)
+    r.timer_seconds = None
+    sm.update(r, "EUR/USD", now=T0 + 60 * 300 + 2)  # perto da virada: não grava
+    assert db.execute("SELECT COUNT(*) FROM fita").fetchone()[0] == 0
+    sm.update(r, "EUR/USD", now=T0 + 60 * 300 + 20)
+    last = db.execute("SELECT MAX(start) FROM fita").fetchone()[0]
+    assert last == T0 + 60 * 299

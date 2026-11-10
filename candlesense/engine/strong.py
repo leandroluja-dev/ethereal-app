@@ -51,11 +51,19 @@ class StrongMode:
 
     def _store_bars(self, r: ChartReading, asset: str, now: float) -> Optional[int]:
         """Grava as velas fechadas visíveis. Devolve o início da vela em formação (UTC)."""
-        if not r.ok or r.timeframe_s != 60 or r.timer_seconds is None or not r.candles:
+        if not r.ok or r.timeframe_s != 60 or not r.candles:
             return None
         if not r.candles[-1].forming:
             return None
-        forming_start = int(round((now + r.timer_seconds) / 60)) * 60 - 60
+        if r.timer_seconds is not None:
+            forming_start = int(round((now + r.timer_seconds) / 60)) * 60 - 60
+        else:
+            # Sem cronômetro na tela (modo Blitz): as velas de 1 min da IQ seguem o minuto do
+            # relógio. Longe da virada do minuto, a vela em formação é a do minuto atual.
+            sec = now % 60
+            if not (4 <= sec <= 56):
+                return None
+            forming_start = int(now // 60) * 60
         closed = [c for c in r.candles if not c.forming]
         rows = []
         for k, c in enumerate(reversed(closed)):
