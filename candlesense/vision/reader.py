@@ -546,8 +546,8 @@ class ChartReader:
                     if ":" in part:
                         continue
                     p = parse_number(part)
-                    if p is not None:
-                        found.append(("." in part or "," in part, len(part), p))
+                    if p is not None and ("." in part or "," in part):  # pedaço sem ponto ("32620") não serve
+                        found.append((True, len(part), p))
             if found:
                 found.sort(key=lambda f: (f[0], f[1]), reverse=True)
                 p = found[0][2]
