@@ -11,7 +11,12 @@ Como funciona (sem clicar em nada e sem API da IQ Option):
 * A direção (alta ou baixa) é deduzida no fechamento pelo resultado e pelo
   movimento do preço entre a entrada e a expiração.
 * Conta real (saldo verde) e de treino (saldo laranja) ficam separadas. Trocar
-  de conta não conta como entrada.
+  de conta não conta como entrada, e a troca também precisa se confirmar
+  (uma leitura de cor errada não mistura as contas).
+* Várias operações fechando juntas: a subida do saldo é repartida entre elas
+  (ganho, empate) pela combinação que explica o valor.
+* Queda que não parece entrada (maior que metade do saldo e diferente do campo
+  "Invest", ou menor que o mínimo de $1) é ignorada: quase sempre é erro de leitura.
 
 Tudo é estimativa a partir da tela e fica marcado como tal: se a leitura do
 saldo falha, nada é registrado.
@@ -27,6 +32,9 @@ from typing import Optional
 from .store import Store
 
 CONFIRM_READS = 2          # leituras iguais para aceitar um saldo novo
+MIN_ENTRY = 1.0            # menor entrada da IQ Option
+ODD_ACCEPT_S = 45          # queda estranha que fica na tela esse tempo vira o novo saldo
+MAX_COMBINED = 6           # operações abertas consideradas ao repartir uma subida
 LOSS_GRACE_S = 20          # depois da expiração, sem subida = perda
 SIGNAL_MEMORY_S = 20       # sinal do app que ainda vale como "seguiu o app"
 DEFAULT_EXPIRY_S = 60
@@ -68,6 +76,9 @@ class WalletTracker:
         self._prices: deque[tuple[float, float]] = deque(maxlen=1200)
         self._last_signal: Optional[tuple[float, str, Optional[float]]] = None
         self.account: Optional[str] = None
+        self._acc_pending: Optional[tuple[str, int]] = None
+        self.ignored: deque[tuple[float, str, float]] = deque(maxlen=50)  # (quando, conta, variação) descartadas
+        self._odd: Optional[tuple[str, float, float]] = None  # saldo estranho que persiste: (conta, valor, desde)
         self._restore()
 
     # --------------------------------------------------------------- estado
@@ -104,12 +115,20 @@ class WalletTracker:
         if account is None or balance is None:
             return events
         if account != self.account:
-            # Trocou de conta (ou começou agora): só guarda o saldo de partida.
+            # Trocou de conta (ou começou agora): confirma a troca e só guarda o saldo de partida.
+            if self.account is not None:
+                n = self._acc_pending[1] + 1 if self._acc_pending and self._acc_pending[0] == account else 1
+                self._acc_pending = (account, n)
+                if n < CONFIRM_READS:
+                    return events
+            self._acc_pending = None
             self.account = account
             self._pending = None
             if account not in self.balance:
                 self.balance[account] = balance
+                self.store.log_balance(now, account, balance)
                 return events
+        self._acc_pending = None
         prev = self.balance.get(account)
         if prev is None:
             self.balance[account] = balance
@@ -125,13 +144,37 @@ class WalletTracker:
         if self._pending[2] < CONFIRM_READS:
             return events
         self._pending = None
-        self.balance[account] = balance
         delta = round(balance - prev, 2)
+        if delta < 0 and not self._plausible_entry(-delta, prev, invest):
+            # Não registra entrada. Se o valor estranho continuar na tela por um tempo
+            # (saque, troca de moeda...), vira o novo saldo de partida, sem operação.
+            if self._odd and self._odd[0] == account and _close(self._odd[1], balance, 0.005):
+                if now - self._odd[2] >= ODD_ACCEPT_S:
+                    self._odd = None
+                    self.balance[account] = balance
+                    self.store.log_balance(now, account, balance)
+            else:
+                self._odd = (account, balance, now)
+                self.ignored.append((now, account, delta))
+            return events
+        self._odd = None
+        self.balance[account] = balance
+        self.store.log_balance(now, account, balance)
         if delta < 0:
             events.append(self._open(account, -delta, price, asset, tf, payout, expiry_seconds, invest, now))
         else:
             events += self._credit(account, delta, now)
         return events
+
+    @staticmethod
+    def _plausible_entry(drop: float, prev: float, invest: Optional[float]) -> bool:
+        if invest and invest > 0:
+            k = drop / invest
+            if round(k) >= 1 and abs(k - round(k)) * invest <= max(0.02, 0.01 * drop):
+                return True  # uma ou mais entradas do valor do campo Invest
+        if drop < MIN_ENTRY - 0.005:
+            return False
+        return drop <= 0.5 * prev
 
     def _open(self, account, amount, price, asset, tf, payout, expiry_seconds, invest, now) -> WalletEvent:
         sig = self._last_signal
@@ -144,11 +187,15 @@ class WalletTracker:
         return WalletEvent("entrada", account, amount, direction=app_action)
 
     def _credit(self, account: str, credit: float, now: float) -> list[WalletEvent]:
-        """Uma subida do saldo: casa com a operação aberta que explica esse valor."""
+        """Uma subida do saldo: casa com a(s) operação(ões) aberta(s) que explicam esse valor."""
         mine = [t for t in self.open if t.account == account]
         if not mine:
             return []  # depósito, recarga da conta de treino etc.
         tol = max(0.02, 0.01 * credit)
+        combo = self._combination(mine, credit, now, tol)
+        if combo is not None and len(combo) > 1:
+            return [self._finish(t, kind, (t.amount * (t.payout or 0) / 100.0) if kind == "ganho" else 0.0, now)
+                    for t, kind in combo]
         for t in sorted(mine, key=lambda t: t.expiry_ts):
             win_val = t.amount * (1 + (t.payout or 0) / 100.0)
             if t.payout and _close(credit, win_val, tol):
@@ -162,6 +209,34 @@ class WalletTracker:
         t = min(cands, key=lambda t: t.expiry_ts)
         kind = "vendida" if now < t.expiry_ts - 2 else ("ganho" if credit > t.amount else "empate")
         return [self._finish(t, kind, credit - t.amount, now)]
+
+    @staticmethod
+    def _combination(mine: list[OpenTrade], credit: float, now: float,
+                     tol: float) -> Optional[list[tuple[OpenTrade, str]]]:
+        """Operações já no fim que, somando ganho (valor x (1+payout)) ou empate (valor), dão a subida."""
+        due = sorted([t for t in mine if now >= t.expiry_ts - 2], key=lambda t: t.expiry_ts)[:MAX_COMBINED]
+        if len(due) < 2:
+            return None
+        best = None
+        # cada operação: fica aberta (0), ganho (1) ou empate (2). Prefere menos operações e ganhos.
+        for code in range(1, 3 ** len(due)):
+            total, pick, c = 0.0, [], code
+            for t in due:
+                c, d = divmod(c, 3)
+                if d == 1 and t.payout:
+                    total += t.amount * (1 + t.payout / 100.0)
+                    pick.append((t, "ganho"))
+                elif d == 2:
+                    total += t.amount
+                    pick.append((t, "empate"))
+                elif d == 1:
+                    pick = []
+                    break
+            if pick and _close(total, credit, tol * len(pick)):
+                key = (len(pick), sum(k == "empate" for _, k in pick))
+                if best is None or key < best[0]:
+                    best = (key, pick)
+        return best[1] if best else None
 
     def _expire(self, now: float) -> list[WalletEvent]:
         out = []
@@ -217,6 +292,7 @@ class AccountDay:
     invested: float = 0.0
     by_hour: dict[int, list] = field(default_factory=dict)   # hora -> [n, lucro]
     by_tf: dict[int, list] = field(default_factory=dict)     # tf (s) -> [n, ganhos, lucro]
+    by_expiry: dict[int, list] = field(default_factory=dict) # expiração (min) -> [n, ganhos, lucro]
     followed: list = field(default_factory=lambda: [0, 0])   # [n, ganhos] seguindo o app
     last: list[dict] = field(default_factory=list)
 
@@ -258,12 +334,26 @@ def summarize(trades: list[dict]) -> dict[str, AccountDay]:
             bt[0] += 1
             bt[1] += int(res == "ganho")
             bt[2] += p
+        m = expiry_minutes(t)
+        if m is not None:
+            be = a.by_expiry.setdefault(m, [0, 0, 0.0])
+            be[0] += 1
+            be[1] += int(res == "ganho")
+            be[2] += p
         if t.get("app_action"):
             a.followed[0] += 1
             a.followed[1] += int(res == "ganho")
     for a in out.values():
         a.last = list(reversed(trades_of(trades, a.account)[-8:]))
     return out
+
+
+def expiry_minutes(t: dict) -> Optional[int]:
+    """Tempo da operação em minutos (a IQ fecha no minuto cheio: 40 s restantes = 1 min)."""
+    if not t.get("expiry_ts") or not t.get("opened"):
+        return None
+    sec = t["expiry_ts"] - t["opened"]
+    return max(1, -(-int(sec) // 60)) if sec > 0 else None
 
 
 def trades_of(trades: list[dict], account: str) -> list[dict]:

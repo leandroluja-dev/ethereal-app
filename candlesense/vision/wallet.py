@@ -18,12 +18,14 @@ import numpy as np
 from ..models import Box, OcrToken
 
 _MONEY_RE = re.compile(r"^\s*(?:R\$|US\$|\$|€|£|₹|₽|R\s*\$)?\s*([0-9][0-9.,\s]*)\s*$")
+_TRAIL_JUNK = re.compile(r"[\s~▾▼▿⌄vV^|_\-–—]+$")
 _CURRENCY_HINT = re.compile(r"[$€£₹₽]")
 
 
 def parse_money(text: str) -> Optional[float]:
     """'$923.22' -> 923.22; 'R$ 1.234,56' -> 1234.56; '$1' -> 1.0; '$10,923.22' -> 10923.22."""
-    t = text.strip().replace("O", "0").replace("o", "0")
+    # A seta do menu ao lado do saldo vira "~", "v", "▾"...; o cursor do campo Invest vira "|".
+    t = _TRAIL_JUNK.sub("", text.strip()).replace("O", "0").replace("o", "0")
     m = _MONEY_RE.match(t)
     if not m:
         return None

@@ -113,3 +113,113 @@ def test_wallet_view_renders():
     img = render_wallet(summarize(s.trades()), score([]), [])
     assert img.ndim == 3 and img.shape[0] > 200
     assert render_wallet({}, None, None).shape[0] > 100
+
+
+def test_two_wins_closing_together_are_split():
+    s = Store(":memory:")
+    w = WalletTracker(s)
+    w.update("treino", 100.0, now=T0)
+    _feed(w, T0 + 1, 90.0, payout=80, expiry_seconds=60)     # entrada de 10
+    _feed(w, T0 + 5, 85.0, payout=80, expiry_seconds=56)     # entrada de 5, mesma expiração
+    ev = _feed(w, T0 + 62, 112.0)                             # 18 + 9 = 27 de volta
+    assert sorted((e.kind, e.amount, e.profit) for e in ev) == [("ganho", 5.0, 4.0), ("ganho", 10.0, 8.0)]
+    assert w.open == []
+    assert w.update("treino", 112.0, now=T0 + 200) == []     # nenhuma "perda" falsa depois
+
+
+def test_win_and_tie_together():
+    s = Store(":memory:")
+    w = WalletTracker(s)
+    w.update("treino", 100.0, now=T0)
+    _feed(w, T0 + 1, 90.0, payout=80, expiry_seconds=60)
+    _feed(w, T0 + 5, 80.0, payout=80, expiry_seconds=56)
+    ev = _feed(w, T0 + 62, 108.0)                             # 18 (ganho) + 10 (empate)
+    assert sorted(e.kind for e in ev) == ["empate", "ganho"]
+
+
+def test_implausible_drop_is_ignored_then_becomes_baseline():
+    s = Store(":memory:")
+    w = WalletTracker(s)
+    w.update("treino", 923.22, now=T0)
+    assert _feed(w, T0 + 1, 92.32) == []                      # OCR perdeu um dígito, estável
+    assert s.trades() == [] and len(w.ignored) == 1
+    assert w.balance["treino"] == 923.22
+    _feed(w, T0 + 60, 92.32)                                  # ficou na tela: novo saldo de partida
+    assert w.balance["treino"] == 92.32 and s.trades() == []
+
+
+def test_big_drop_matching_invest_is_an_entry():
+    s = Store(":memory:")
+    w = WalletTracker(s)
+    w.update("real", 100.0, now=T0)
+    ev = _feed(w, T0 + 1, 30.0, acc="real", invest=70.0, payout=80, expiry_seconds=60)
+    assert [e.kind for e in ev] == ["entrada"] and ev[0].amount == 70.0
+    assert _feed(w, T0 + 5, 29.5, acc="real") == []            # abaixo do mínimo de $1
+
+
+def test_one_wrong_colour_read_does_not_mix_accounts():
+    s = Store(":memory:")
+    w = WalletTracker(s)
+    w.update("treino", 1000.0, now=T0)
+    w.update("real", 1000.0, now=T0 + 1)                       # cor lida errada uma vez
+    w.update("treino", 1000.0, now=T0 + 2)
+    assert "real" not in w.balance
+    _feed(w, T0 + 3, 990.0, payout=80, expiry_seconds=60)
+    assert [t["account"] for t in s.trades()] == ["treino"]
+
+
+def test_report_today_history_and_expiry():
+    from candlesense.history.report import wallet_report
+
+    s = Store(":memory:")
+    w = WalletTracker(s)
+    w.update("treino", 100.0, now=T0 - 86400)
+    _feed(w, T0 - 86400 + 1, 90.0, payout=80, expiry_seconds=40, tf=60)
+    _feed(w, T0 - 86400 + 45, 108.0)                           # ontem: 1 ganho
+    _feed(w, T0 + 1, 98.0, payout=80, expiry_seconds=290, tf=300)
+    w.update("treino", 98.0, now=T0 + 400)                     # hoje: 1 perda (5 min)
+    _feed(w, T0 + 500, 93.0, payout=80, expiry_seconds=100, tf=60)
+    rep = wallet_report(s, w, now=T0 + 510)
+    assert rep.account == "treino" and rep.balance == 93.0
+    assert len(rep.open) == 1 and rep.open[0].amount == 5.0 and 80 <= rep.open[0].seconds_left <= 100
+    assert (rep.today.n, rep.today.wins, rep.today.losses) == (2, 0, 1)
+    assert rep.today.by_expiry[5][0] == 1 and rep.today.by_expiry[2][0] == 1
+    assert rep.all_time.n == 3 and round(rep.all_time.profit, 2) == -2.0
+    assert [d.n for d in rep.days] == [2, 1]
+    assert rep.days[1].profit == 8.0 and rep.days[1].balance_close == 108.0
+    assert rep.days[0].balance_open == 108.0
+
+
+def test_report_without_balance():
+    from candlesense.history.report import wallet_report
+
+    rep = wallet_report(Store(":memory:"), None)
+    assert rep.account is None and rep.today is None
+    assert rep.timeframes is not None and rep.timeframes.best is None
+
+
+def test_parse_money_ignores_menu_arrow_and_cursor():
+    # O OCR lê a seta do menu ao lado do saldo como "~" e o cursor do Invest como "|".
+    assert parse_money("$923.22 ~") == 923.22
+    assert parse_money("$923.22▾") == 923.22
+    assert parse_money("$ 1|") == 1.0
+
+
+def test_real_balance_crop_is_found_and_is_practice():
+    """Topo real da IQ Option (saldo laranja com a seta do menu), num quadro de janela inteira."""
+    from pathlib import Path
+
+    import pytest
+    from candlesense.vision.wallet import find_balance
+
+    try:
+        from candlesense.vision.ocr import best_engine
+        eng = best_engine("auto")
+    except Exception:
+        pytest.skip("sem OCR")
+    crop = cv2.imread(str(Path(__file__).parent / "fixtures/real/saldo_treino_seta.png"))
+    full = np.zeros((900, 2400, 3), np.uint8)
+    full[10:10 + crop.shape[0], 2400 - crop.shape[1]:] = crop
+    box = find_balance(eng.read(full, None), Box(0, 200, 1600, 600), full.shape[1], full.shape[0])
+    assert box is not None
+    assert account_kind(full, box) == "treino"

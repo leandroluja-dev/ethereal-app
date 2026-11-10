@@ -58,3 +58,24 @@ def test_calibration_needs_data():
     cal = learn(_preds(50, 0.58, 0.5))
     assert not cal.active and "faltam" in cal.note[1]
     assert cal.apply(1, 0.58) == 0.58
+
+
+def test_best_timeframe_needs_proof():
+    import random
+
+    from candlesense.history.timeframes import compare
+
+    rnd = random.Random(3)
+    sig = []
+    for tf, rate, n in ((60, 0.50, 200), (120, 0.66, 200), (300, 0.80, 10)):
+        for _ in range(n):
+            sig.append({"tf": tf, "asset": "EUR/USD", "payout": 86, "outcome": int(rnd.random() < rate)})
+    adv = compare(sig, [])
+    assert adv.best is not None and adv.best.tf == 120       # 5 min acerta muito, mas com 10 sinais só
+    assert "2 min" in adv.text
+    assert {s.tf for s in adv.stats} == {60, 120, 300}
+
+    only_bad = [s for s in sig if s["tf"] == 60]
+    adv = compare(only_bad, [])
+    assert adv.best is None and "equilíbrio" in adv.text
+    assert compare([], []).best is None
