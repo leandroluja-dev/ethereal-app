@@ -260,3 +260,55 @@ def timed_grab(src: FrameSource) -> tuple[Optional[np.ndarray], float]:
     t = time.perf_counter()
     img = src.grab()
     return img, (time.perf_counter() - t) * 1000
+
+
+class PrefetchSource:
+    """Captura o próximo quadro em segundo plano enquanto o atual é lido.
+
+    A captura do macOS leva ~150 ms; lida em paralelo, o tempo de cada ciclo
+    passa a ser o maior dos dois (captura ou leitura), não a soma.
+    """
+
+    def __init__(self, src: FrameSource) -> None:
+        import threading
+
+        self.src = src
+        self.name = getattr(src, "name", "captura") + " (em paralelo)"
+        self._lock = threading.Lock()
+        self._new = threading.Event()
+        self._frame: Optional[np.ndarray] = None
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, name="captura", daemon=True)
+        self._t.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                img = self.src.grab()
+            except Exception as e:  # nunca derruba o app
+                log.debug("captura em paralelo falhou: %s", e)
+                img = None
+            if img is None:
+                time.sleep(0.2)
+                continue
+            with self._lock:
+                self._frame = img
+            self._new.set()
+
+    def grab(self) -> Optional[np.ndarray]:
+        if not self._new.wait(2.5):
+            return None
+        with self._lock:
+            img, self._frame = self._frame, None
+            self._new.clear()
+        return img
+
+    def refresh_if_resized(self) -> None:
+        fn = getattr(self.src, "refresh_if_resized", None)
+        if fn:
+            fn()
+
+    def close(self) -> None:
+        self._stop.set()
+        self._t.join(timeout=3)
+        self.src.close()

@@ -221,6 +221,74 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
         wallet_view.show(render_wallet(days, board, store.signals(since=since), wallet_view.scale))
 
 
+def _show_panel(panel, dec, r, extras, wallet_view) -> None:
+    """Uma janela só: a carteira aparece dentro do próprio painel."""
+    overlay = wallet_view.image if wallet_view is not None and wallet_view.visible else None
+    panel.show(dec, r, extras, overlay=overlay)
+
+
+def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1):
+    """Atende teclas e cliques do painel. Devolve "sair", "redesenhar" ou None."""
+    key = (cv2.waitKey(wait_ms) & 0xFF) if poll else 255
+    if key in (27, ord("q")):
+        print("fechado com q/Esc", flush=True)
+        return "sair"
+    act = None
+    if key == ord("d"):
+        extras.details = not extras.details
+        act = "redesenhar"
+    if key == ord("g"):
+        extras.chart = not extras.chart
+        act = "redesenhar"
+    if getattr(panel, "pop_hover_change", lambda: False)():
+        act = "redesenhar"  # mouse sobre o botão: muda a cor na hora
+    if (key == ord("c") or panel.pop_click() == "carteira") and wallet_view is not None:
+        wallet_view.toggle()
+        act = "redesenhar"
+    if not panel.is_open():
+        print("painel fechado pela janela", flush=True)
+        return "sair"
+    return act
+
+
+def _open_source(win, open_window_source):
+    """Captura da janela, com o próximo quadro sendo capturado enquanto o atual é lido."""
+    from .platform.capture import PrefetchSource
+
+    src = open_window_source(win)
+    try:
+        return PrefetchSource(src)
+    except Exception as e:
+        print(f"captura em paralelo indisponível: {e!r}", flush=True)
+        return src
+
+
+def _restart_for_update(panel, src, store) -> None:
+    """Versão nova baixada: mostra 'Atualizando...' no painel e reabre o app sozinho."""
+    from .platform.selfupdate import loading_frame, restart
+
+    print("reabrindo com a versão nova", flush=True)
+    if panel is not None:
+        t_end = time.monotonic() + 1.2
+        while time.monotonic() < t_end:
+            try:
+                cv2.imshow(panel.NAME, loading_frame())
+                cv2.waitKey(40)
+            except Exception:
+                break
+    for fn in (src.close, store.close):
+        try:
+            fn()
+        except Exception:
+            pass
+    try:
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+    except Exception:
+        pass
+    restart()
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import close_other_instances, hide_python_dock_icon
@@ -243,7 +311,7 @@ def cmd_live(args) -> int:
                 time.sleep(0.5)
                 win = _find_window_or_wait(wait=True)
 
-    src = open_window_source(win)
+    src = _open_source(win, open_window_source)
     print(f"Captura: {src.name}. Ctrl+C para sair.")
     reader = ChartReader(best_engine(args.ocr))
     engine = _engine(args)
@@ -251,6 +319,11 @@ def cmd_live(args) -> int:
     from .history.store import Store
 
     store = Store(Path(args.dados) / "candlesense.db")
+    updater = None
+    if APP_MODE:
+        from .platform.selfupdate import Updater
+
+        updater = Updater(Path(__file__).resolve().parents[1]).start()
     engine.calibration = learn(store.predictions())
     last_learn = time.monotonic()
     from .history.wallet import WalletTracker
@@ -288,6 +361,8 @@ def cmd_live(args) -> int:
     try:
         while True:
             t0 = time.perf_counter()
+            if updater is not None and updater.ready.is_set():
+                _restart_for_update(panel, src, store)
             img, cap_ms = timed_grab(src)
             if img is None:
                 fails += 1
@@ -295,7 +370,8 @@ def cmd_live(args) -> int:
                     print("\nSem imagem da janela (minimizada ou fechada?). Tentando de novo...")
                 if fails >= 30:
                     win = _find_window_or_wait(wait=True)
-                    src = open_window_source(win)
+                    src.close()
+                    src = open_window_source(win)  # sem captura em paralelo, por segurança
                     reader.reset()
                     engine.reset()
                     fails = 0
@@ -366,28 +442,15 @@ def cmd_live(args) -> int:
             if APP_MODE:
                 _diagnostic(img, r, dec)
             if panel is not None:
-                # Uma janela só: a carteira aparece dentro do próprio painel
-                overlay = wallet_view.image if wallet_view is not None and wallet_view.visible else None
-                panel.show(dec, r, extras, overlay=overlay)
-                if not (args.debug or save_dir):
-                    key = cv2.waitKey(1) & 0xFF
-                    if key in (27, ord("q")):
-                        print("fechado com q/Esc", flush=True)
-                        break
-                    if key == ord("d"):
-                        extras.details = not extras.details
-                    if key == ord("c") and wallet_view is not None:
-                        wallet_view.toggle()
-                        wallet_dirty = True
-                    if key == ord("g"):
-                        extras.chart = not extras.chart
-                click = panel.pop_click()
-                if click == "carteira" and wallet_view is not None:
-                    wallet_view.toggle()
-                    wallet_dirty = True
-                if not panel.is_open():
-                    print("painel fechado pela janela", flush=True)
-                    break  # fechou pela bolinha vermelha
+                _show_panel(panel, dec, r, extras, wallet_view)
+                act = _panel_input(panel, wallet_view, extras, poll=not (args.debug or save_dir))
+                if act == "sair":
+                    break
+                if act == "redesenhar":
+                    wallet_dirty = False
+                    last_wallet = time.monotonic()
+                    _wallet_extras(extras, wallet, store, r.account, wallet_view)
+                    _show_panel(panel, dec, r, extras, wallet_view)
             if args.debug or save_dir:
                 ov = draw(img, r)
                 if args.debug:
@@ -408,9 +471,22 @@ def cmd_live(args) -> int:
                         json.dumps({"leitura": _reading_json(r), "sinal": _decision_json(dec)},
                                    ensure_ascii=False, indent=1, default=float))
                     last_save = time.monotonic()
-            dt = time.perf_counter() - t0
-            if dt < period:
-                time.sleep(period - dt)
+            # Espera a próxima leitura atendendo cliques e teclas na hora (antes ficavam
+            # parados até a leitura seguinte terminar).
+            stop = False
+            while time.perf_counter() - t0 < period:
+                if panel is None or args.debug or save_dir:
+                    time.sleep(max(0.0, period - (time.perf_counter() - t0)))
+                    break
+                act = _panel_input(panel, wallet_view, extras, poll=True, wait_ms=15)
+                if act == "sair":
+                    stop = True
+                    break
+                if act == "redesenhar":
+                    _wallet_extras(extras, wallet, store, r.account, wallet_view)
+                    _show_panel(panel, dec, r, extras, wallet_view)
+            if stop:
+                break
     except KeyboardInterrupt:
         pass
     finally:

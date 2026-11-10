@@ -7,6 +7,8 @@ Depois disso, cada quadro só faz OCR em recortes pequenos.
 
 from __future__ import annotations
 
+import re
+
 from typing import Optional
 
 import numpy as np
@@ -93,10 +95,45 @@ def _purchase_token(tokens: list[OcrToken]) -> Optional[OcrToken]:
     return best[1] if best else None
 
 
-def find_purchase(tokens: list[OcrToken], img_w: int, img_h: int) -> Optional[Box]:
-    t = _purchase_token(tokens)
-    if t is None:
+_CLOCK_TAIL = re.compile(r"(\d{1,2}\s*[:.]\s*\d{2})\s*$")
+
+
+def _purchase_inline(tokens: list[OcrToken]) -> Optional[OcrToken]:
+    """O Vision às vezes junta tudo num texto só ('PURCHASE TIME 00:31' ou 'TIME 00:31')."""
+    for t in tokens:
+        up = t.text.upper()
+        if not any(k in up for k in _PURCHASE_WORDS + ("TIME", "TEMPO")):
+            continue
+        m = _CLOCK_TAIL.search(t.text)
+        if not m or m.start() == 0:
+            continue
+        frac = m.start() / max(1, len(t.text))
+        x1 = t.box.x + int(frac * t.box.w)
+        return OcrToken(m.group(1), Box(x1, t.box.y, t.box.x2 - x1, t.box.h), t.score)
+    return None
+
+
+def _purchase_beside_label(tokens: list[OcrToken], img_w: int, img_h: int) -> Optional[Box]:
+    """Sem os dígitos no OCR da tela inteira: recorta a área à direita de 'PURCHASE / TIME'."""
+    words = [t for t in tokens if any(k in t.text.upper() for k in _PURCHASE_WORDS)]
+    if not words:
         return None
+    w = words[0]
+    below = [t for t in tokens if t.text.strip().upper() in ("TIME", "TEMPO")
+             and 0 <= t.box.y - w.box.y2 <= 2 * w.box.h and abs(t.box.x2 - w.box.x2) <= 3 * w.box.h]
+    y1 = w.box.y
+    y2 = max([w.box.y2] + [t.box.y2 for t in below])
+    x1 = max([w.box.x2] + [t.box.x2 for t in below]) + 2
+    hh = y2 - y1
+    pad = hh // 6 + 2
+    x2 = min(img_w, x1 + int(2.6 * hh) + 4)
+    return Box(x1, max(0, y1 - pad), x2 - x1, min(img_h, y2 + pad) - max(0, y1 - pad))
+
+
+def find_purchase(tokens: list[OcrToken], img_w: int, img_h: int) -> Optional[Box]:
+    t = _purchase_token(tokens) or _purchase_inline(tokens)
+    if t is None:
+        return _purchase_beside_label(tokens, img_w, img_h)
     # Só os dígitos: o texto "PURCHASE TIME" ao lado atrapalha o OCR do recorte.
     pad_y = t.box.h // 4 + 2
     x1, x2 = max(0, t.box.x - 3), min(img_w, t.box.x2 + t.box.w // 4)

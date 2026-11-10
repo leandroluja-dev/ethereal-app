@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import math
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -245,6 +246,11 @@ class ChartReader:
         tokens = self.ocr.read(bgr, None)
         self.last_tokens = tokens
         self.layout = build_layout(bgr, det, tokens)
+        if self.layout is not None and self.layout.purchase is None:
+            near = [t.text for t in tokens if any(k in t.text.upper() for k in ("PURCH", "TIME", "COMPRA", "TEMPO"))
+                    or re.fullmatch(r"\s*\d{1,2}\s*[:.]\s*\d{2}\s*", t.text)]
+            log.warning("tempo de compra não achado no layout; textos: %s", near[:12])
+            print(f"layout sem tempo de compra; textos: {near[:12]}", flush=True)
         self._axis_cache = _OcrCache()
         self._timer_cache = _OcrCache()
         self._payout_cache = _OcrCache()

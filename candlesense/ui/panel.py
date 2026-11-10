@@ -256,11 +256,25 @@ def _icon_line(c: _Canvas, kind: str, txt: str, color=FG, icolor=DIM, size: floa
 # Blocos
 # ---------------------------------------------------------------------------
 
+# Estado do mouse sobre os botões (atualizado pela janela): None, "hover" ou "down"
+BUTTON_STATE: dict[str, Optional[str]] = {"carteira": None}
+
+
 def draw_button(c: _Canvas, label: str = "Carteira") -> None:
-    """Pílula do canto de cima (Carteira no painel, Voltar na carteira)."""
+    """Pílula do canto de cima (Carteira no painel, Voltar na carteira).
+
+    Normal: cinza. Mouse em cima: mais clara com contorno. Apertada: branca, como o Buy da referência.
+    """
     x1, y1, x2, y2 = BUTTONS["carteira"]
-    c.rrect(x1, y1, x2, y2, (y2 - y1) / 2, fill=CARD_2)
-    c.at((x1 + x2) / 2, (y1 + y2) / 2, label, 13, FG, "medium", anchor="mm")
+    st = BUTTON_STATE.get("carteira")
+    if st == "down":
+        fill, fg, outline = FG, BLACK, None
+    elif st == "hover":
+        fill, fg, outline = CARD_3, WHITE, (120, 120, 126)
+    else:
+        fill, fg, outline = CARD_2, FG, None
+    c.rrect(x1, y1, x2, y2, (y2 - y1) / 2, fill=fill, outline=outline, width=1.2)
+    c.at((x1 + x2) / 2, (y1 + y2) / 2, label, 13, fg, "semibold" if st else "medium", anchor="mm")
 
 
 def _header(c: _Canvas, reading: Optional[ChartReading], ex: PanelExtras) -> None:
@@ -742,8 +756,27 @@ class PanelWindow:
             self._placed = True
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
-        if event == self.cv2.EVENT_LBUTTONUP:
-            self._click = hit_button(x, y, self.scale)
+        cv2 = self.cv2
+        over = hit_button(x, y, self.scale)
+        before = BUTTON_STATE.get("carteira")
+        if event == cv2.EVENT_LBUTTONDOWN:
+            now = "down" if over else None
+        elif event == cv2.EVENT_LBUTTONUP:
+            self._click = over
+            now = "hover" if over else None
+        elif event == cv2.EVENT_MOUSEMOVE:
+            pressed = bool(flags & cv2.EVENT_FLAG_LBUTTON)
+            now = ("down" if pressed and before == "down" else "hover") if over else None
+        else:
+            return
+        if now != before:
+            BUTTON_STATE["carteira"] = now
+            self._hover_changed = True
+
+    def pop_hover_change(self) -> bool:
+        """O mouse entrou, saiu ou apertou um botão desde a última vez? (pede redesenho)"""
+        ch, self._hover_changed = getattr(self, "_hover_changed", False), False
+        return ch
 
     def pop_click(self) -> Optional[str]:
         """O botão clicado desde a última vez ('carteira') ou None."""
