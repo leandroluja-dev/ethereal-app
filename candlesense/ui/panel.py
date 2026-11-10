@@ -733,7 +733,9 @@ class PanelWindow:
 
         self.cv2 = cv2
         self.scale = scale
-        cv2.namedWindow(self.NAME, cv2.WINDOW_AUTOSIZE)
+        # Janela que aumenta e diminui puxando o canto: a imagem acompanha (mantém a proporção).
+        cv2.namedWindow(self.NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+        self._shape: Optional[tuple[int, int]] = None
         self._topmost()
         self._seen_open = False
         self._placed = False
@@ -785,6 +787,7 @@ class PanelWindow:
                     img = np.hstack([img, side])
             except Exception as e:  # as telas novas nunca derrubam o painel
                 print(f"telas das entradas: {e!r}", flush=True)
+        self._fit_window(img)
         self.cv2.imshow(self.NAME, img)
         self._frames += 1
         if self._frames in (1, 3, 10) or self._frames % 50 == 0:
@@ -797,6 +800,27 @@ class PanelWindow:
             except Exception:
                 pass
             self._placed = True
+
+    def _fit_window(self, img: np.ndarray) -> None:
+        """Ajusta a janela quando a imagem muda de tamanho, mantendo o zoom que a pessoa escolheu."""
+        if getattr(img, "shape", None) is None:
+            return
+        h, w = img.shape[:2]
+        if getattr(self, "_shape", None) == (w, h):
+            return
+        zoom = 1.0
+        if getattr(self, "_shape", None) is not None:
+            try:
+                _, _, cw, _ = self.cv2.getWindowImageRect(self.NAME)
+                if cw > 0:
+                    zoom = max(0.3, min(3.0, cw / self._shape[0]))
+            except Exception:
+                pass
+        self._shape = (w, h)
+        try:
+            self.cv2.resizeWindow(self.NAME, int(round(w * zoom)), int(round(h * zoom)))
+        except Exception:
+            pass
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
         cv2 = self.cv2
