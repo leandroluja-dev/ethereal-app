@@ -528,6 +528,24 @@ def _start_web(args):
         return None
 
 
+def _day_source(path):
+    """Entradas de um dia para a agenda da página (conexão própria: roda na linha do servidor)."""
+    def load(day: str) -> dict:
+        import sqlite3
+
+        from .history.simbook import day_entries
+
+        db = sqlite3.connect(str(path), timeout=2)
+        try:
+            by: dict = {}
+            for e in day_entries(db, day):
+                by.setdefault(e.pop("wallet"), []).append(e)
+            return by
+        finally:
+            db.close()
+    return load
+
+
 def _publish_web(web, st, extras, dec) -> None:
     from .web.server import build_state
 
@@ -603,6 +621,8 @@ def cmd_live(args) -> int:
         from .engine.strong import StrongMode
 
         strong = StrongMode(store.db)
+        if web is not None:
+            web.day_source = _day_source(Path(args.dados) / "candlesense.db")
     except Exception as e:
         print(f"modo medição indisponível: {e!r}", flush=True)
     filler = None
@@ -759,6 +779,7 @@ def cmd_live(args) -> int:
                     fresh = stt.last_p is not None and stt.last_ts is not None and stt.now - stt.last_ts < 180
                     extras.model_p = stt.last_p if fresh else None
                     extras.model_time = time.strftime("%H:%M", time.localtime(stt.last_ts)) if fresh else None
+                    extras.app_wallet = stt.app_wallet()
                 except Exception as e:  # as telas das entradas nunca derrubam a leitura
                     print(f"telas das entradas: {e!r}", flush=True)
                 if web is not None and sides.state is not None:

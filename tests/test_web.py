@@ -40,3 +40,23 @@ def test_server_serves_page_and_state():
         assert d["entries"][0]["wallets"] == ["A"]
     finally:
         web.close()
+
+
+def test_app_wallet_sums_all_wallets():
+    st = SimState(entries={"A": [_e("X", 60, "ganhou", 8.9)], "C": [_e("X", 60, "perdeu", -10.0)]}, now=100.0)
+    w = st.app_wallet()
+    assert abs(w["balance"] - (10_000 - 1.1)) < 1e-6 and abs(w["day"] + 1.1) < 1e-6
+    assert w["wins"] == 1 and w["losses"] == 1
+
+
+def test_day_endpoint_groups_entries():
+    web = WebServer(port=0, host="127.0.0.1")
+    try:
+        web.day_source = lambda d: {"A": [_e("X", 60, "ganhou", 8.9)], "B": [_e("X", 60, "ganhou", 8.9)]}
+        base = f"http://127.0.0.1:{web.port}"
+        d = json.loads(urllib.request.urlopen(base + "/api/day?d=2026-11-09").read())
+        assert d["entries"][0]["wallets"] == ["A", "B"] and d["entries"][0]["profit"] == 17.8
+        bad = json.loads(urllib.request.urlopen(base + "/api/day?d=x").read())
+        assert bad == {"entries": []}
+    finally:
+        web.close()

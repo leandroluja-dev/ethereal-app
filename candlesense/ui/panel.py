@@ -286,6 +286,7 @@ class PanelExtras:
     # histórico longo do mercado: [(período, variação %)] e um aviso quando não há
     market: Optional[list] = None
     market_note: Optional[str] = None
+    app_wallet: Optional[dict] = None  # carteira simulada do app: {balance, day, wins, losses}
 
 
 # Botões desenhados no próprio painel. (x1, y1, x2, y2) em unidades do painel, antes da escala.
@@ -570,8 +571,44 @@ def _live_result(t: dict, price: Optional[float]) -> tuple[Optional[float], Opti
     return -amount, "perdendo"
 
 
+def _app_wallet_strip(c: _Canvas, ex: PanelExtras) -> None:
+    """Carteira simulada do app (dinheiro de mentira): resultado de hoje e saldo, sem ler a IQ."""
+    w = ex.app_wallet
+    y0 = c.u
+    h = 78
+    c.card(y0, y0 + h)
+    inner = PAD + 18
+    right = W - PAD - 16
+    cy = y0 + h / 2
+    day = w.get("day") or 0.0
+    c.at(inner, cy - 16, "Carteira do app · hoje", 12, DIM, anchor="lm")
+    col = GREEN if day > 0.004 else RED if day < -0.004 else FG
+    txt = ("+" if day > 0.004 else "-" if day < -0.004 else "") + "R$ " + f"{abs(day):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    c.at(inner, cy + 10, txt, 26, col, "bold", anchor="lm")
+    lab = "GREEN" if day > 0.004 else "LOSS" if day < -0.004 else "ZERO"
+    bx = inner + c.tw(txt, 26, "bold") + 10
+    bw = c.tw(lab, 11, "bold") + 16
+    if lab == "ZERO":
+        c.rrect(bx, cy + 1, bx + bw, cy + 19, 9, outline=DIM, width=1.2)
+        c.at(bx + bw / 2, cy + 10, lab, 11, DIM, "bold", anchor="mm")
+    else:
+        c.rrect(bx, cy + 1, bx + bw, cy + 19, 9, fill=col)
+        c.at(bx + bw / 2, cy + 10, lab, 11, BLACK, "bold", anchor="mm")
+    lab = "SIMULADA"
+    bw = c.tw(lab, 11, "bold") + 16
+    c.rrect(right - bw, cy - 25, right, cy - 7, 9, outline=ORANGE, width=1.2)
+    c.at(right - bw / 2, cy - 16, lab, 11, ORANGE, "bold", anchor="mm")
+    bal = f"{w.get('balance', 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    c.at(right, cy + 6, "saldo R$ " + bal, 12, DIM, "medium", anchor="rm")
+    c.at(right, cy + 23, f"{w.get('wins', 0)}G {w.get('losses', 0)}P", 12, DIM, anchor="rm")
+    c.y = c.px(y0 + h + GAP)
+
+
 def _wallet_strip(c: _Canvas, ex: PanelExtras) -> None:
     """Carteira no topo: o seu dia (GREEN ou LOSS, pelos seus ganhos e perdas), a conta e o saldo."""
+    if ex.app_wallet is not None:
+        _app_wallet_strip(c, ex)
+        return
     y0 = c.u
     h = 78
     c.card(y0, y0 + h)

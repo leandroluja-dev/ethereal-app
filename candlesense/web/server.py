@@ -48,7 +48,7 @@ def _group(entries: dict) -> list:
             g["wallets"].append(key)
             g["_st"].append(e["status"])
             if e["status"] == "aberta":
-                g["_open"].append(e["expiry_ts"])
+                g["_open"].append(e.get("expiry_ts") or e["ts"])
             elif e["status"] in ("ganhou", "perdeu", "empate"):
                 g["_profit"] += e["profit"] or 0.0
     out = []
@@ -88,15 +88,15 @@ def build_state(st, extras=None, decision_text: str = "", decision_action: str =
             need = st.note
         elif st.hist_min is not None and st.hist_min < st.hist_need:
             need = f"juntando histórico: {st.hist_min} de {st.hist_need} min"
-    account = {}
-    if extras is not None and extras.wallet_account:
-        account = {"type": extras.wallet_account, "balance": extras.wallet_balance, "day": extras.wallet_day}
+    aw = st.app_wallet()
+    app_wallet = {"balance": round(aw["balance"], 2), "day": round(aw["day"], 2),
+                  "wins": aw["wins"], "losses": aw["losses"], "n": aw["n"]}
     return {
         "now": st.now or time.time(), "asset": st.asset, "price": st.price, "stake": st.stake,
         "start_balance": START_BALANCE, "url": url,
         "model": {"p_up": st.last_p, "ts": st.last_ts, "ready": ready, "note": need},
         "decision": {"action": decision_action, "text": decision_text},
-        "account": account, "wallets": wallets, "entries": _group(st.entries), "days": st.days(),
+        "app_wallet": app_wallet, "wallets": wallets, "entries": _group(st.entries), "days": st.days(),
     }
 
 
@@ -116,6 +116,11 @@ class WebServer:
                 path = self.path.split("?", 1)[0]
                 if path in ("/", "/index.html"):
                     body, ctype = PAGE.read_bytes(), "text/html; charset=utf-8"
+                elif path == "/api/day":
+                    from urllib.parse import parse_qs, urlsplit
+
+                    day = (parse_qs(urlsplit(self.path).query).get("d") or [""])[0]
+                    body, ctype = srv.day_body(day), "application/json"
                 elif path == "/api/state":
                     srv.last_hit = time.time()
                     body, ctype = srv.body(), "application/json"
@@ -137,6 +142,19 @@ class WebServer:
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, name="pagina", daemon=True)
         self.thread.start()
+
+    day_source = None  # função dia -> {letra: [entradas]} (o app liga ao banco)
+
+    def day_body(self, day: str) -> bytes:
+        import re
+
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day or "") or self.day_source is None:
+            return b'{"entries": []}'
+        try:
+            by = self.day_source(day)
+        except Exception as e:  # o banco ocupado nunca derruba a página
+            return json.dumps({"entries": [], "error": repr(e)}).encode()
+        return json.dumps({"day": day, "entries": _group(by)}, ensure_ascii=False).encode()
 
     def tick(self, ts: float, asset: Optional[str], price: Optional[float]) -> list:
         """Guarda o preço lido agora; troca de par zera o gráfico."""

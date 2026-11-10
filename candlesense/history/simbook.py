@@ -67,6 +67,14 @@ class SimBook:
         return self._past
 
 
+def day_entries(db, day: str) -> list[dict]:
+    """Entradas já resolvidas de um dia ('2026-11-10'), no formato das entradas ao vivo."""
+    q = ("SELECT wallet, asset, start, mode, ts, side, chance, payout, stake, status, profit FROM sim_hist "
+         "WHERE date(ts, 'unixepoch', 'localtime') = ? ORDER BY ts")
+    cols = ("wallet", "asset", "start", "mode", "ts", "side", "chance", "payout", "stake", "status", "profit")
+    return [dict(zip(cols, r)) for r in db.execute(q, (day,))]
+
+
 def balances(past: list[dict], today: dict, keys: Iterable[str]) -> dict:
     """Saldo de cada carteira: R$ 10.000 + dias anteriores + hoje (``today`` = {letra: lucro})."""
     out = {}

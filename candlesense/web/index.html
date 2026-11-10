@@ -192,7 +192,34 @@ button { font: inherit; color: inherit; }
 .tcard .warn { width: 12px; height: 12px; }
 
 /* histórico */
-.hist { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 16px; }
+.hist { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(0,1fr); gap: 16px; align-items: start; }
+.hist .chart { grid-column: 1 / -1; }
+.cal-head { display: flex; justify-content: space-between; align-items: center; }
+.cal-head h3 { text-transform: capitalize; }
+.cal-nav { display: flex; gap: 6px; }
+.cal-nav button { width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--stroke); background: rgba(255,255,255,.04); color: var(--fg); font: inherit; font-size: 16px; cursor: pointer; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 6px; }
+.cal-grid .wd { font-size: 11px; color: var(--faint); text-align: center; padding-bottom: 2px; text-transform: uppercase; letter-spacing: .08em; }
+.cday { position: relative; min-height: 78px; border-radius: 12px; padding: 8px; border: 1px solid var(--stroke); background: rgba(255,255,255,.025); display: flex; flex-direction: column; gap: 2px; text-align: left; font: inherit; color: var(--fg); cursor: pointer; min-width: 0; }
+.cday:disabled { cursor: default; opacity: .35; }
+.cday.blank { visibility: hidden; }
+.cday .n { font-size: 12px; color: var(--dim); }
+.cday .r { margin-top: auto; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cday .g { font-size: 10.5px; color: var(--dim); white-space: nowrap; }
+.cday.win { background: linear-gradient(160deg, rgba(63,209,116,.22), rgba(63,209,116,.06)); border-color: rgba(120,240,170,.3); }
+.cday.loss { background: linear-gradient(160deg, rgba(239,75,75,.22), rgba(239,75,75,.06)); border-color: rgba(255,140,140,.28); }
+.cday.today .n { color: var(--green); font-weight: 700; }
+.cday.sel { outline: 2px solid rgba(255,255,255,.7); outline-offset: 1px; }
+.d-wallets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.d-wallets span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--stroke); background: rgba(255,255,255,.03); }
+.d-wallets i, .d-row .ws i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.d-list { display: flex; flex-direction: column; max-height: 460px; overflow-y: auto; }
+.d-row { display: grid; grid-template-columns: 56px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--stroke); font-size: 13px; }
+.d-row:first-child { border-top: 0; }
+.d-row .t { font-variant-numeric: tabular-nums; color: var(--dim); }
+.d-row .ws { display: inline-flex; gap: 3px; margin-left: 6px; }
+.d-row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) { .cday { min-height: 58px; padding: 5px; } .cday .g { display: none; } .cday .r { font-size: 11px; } .cal-grid { gap: 4px; } }
 .hist .card { padding: 18px; min-width: 0; }
 .hist h3 { margin: 0 0 4px; font-size: 16px; font-weight: 500; }
 .hist p.sub { margin: 0 0 14px; font-size: 12px; color: var(--dim); }
@@ -269,7 +296,7 @@ button { font: inherit; color: inherit; }
       <div class="filter glass"><small>Par</small><div id="fAsset">—</div></div>
       <div class="filter glass"><small>Modelo agora</small><div id="fModel">—</div></div>
       <div class="filter glass"><small>Painel</small><div id="fDecision">—</div></div>
-      <div class="filter glass"><small>Sua conta na IQ</small><div id="fAccount">—</div></div>
+      <div class="filter glass"><small>Carteira do app · simulada</small><div id="fAccount">—</div></div>
     </section>
 
     <section class="livebar glass" id="live">
@@ -290,16 +317,23 @@ button { font: inherit; color: inherit; }
     </section>
 
     <section class="hist" id="viewHist" hidden>
+      <div class="card glass cal">
+        <div class="cal-head"><h3 id="calTitle">—</h3>
+          <div class="cal-nav"><button type="button" id="calPrev" aria-label="mês anterior">‹</button><button type="button" id="calNext" aria-label="próximo mês">›</button></div></div>
+        <p class="sub" id="calSub">toque num dia para ver tudo o que aconteceu</p>
+        <div class="cal-grid" id="calGrid"></div>
+      </div>
+      <div class="card glass dayc">
+        <h3 id="dTitle">—</h3>
+        <p class="sub" id="dSub"></p>
+        <div class="d-wallets" id="dWallets"></div>
+        <div class="d-list" id="dList"></div>
+      </div>
       <div class="card glass chart">
         <h3>Saldo das carteiras</h3>
         <p class="sub" id="histSub">fim de cada dia</p>
         <div id="chart"></div>
         <div class="legend-w" id="chartLegend"></div>
-      </div>
-      <div class="card glass">
-        <h3>Dia a dia</h3>
-        <p class="sub">total e resultado de cada carteira</p>
-        <div id="days"></div>
       </div>
     </section>
   </main>
@@ -347,14 +381,14 @@ button { font: inherit; color: inherit; }
     for (let d = 4; d >= 1; d--) {
       const dt = new Date((now - d * 86400) * 1000);
       const w = {}; specs.forEach(s => { const n = 4 + Math.floor(rnd() * 12), wins = Math.round(n * (.45 + rnd() * .2)); w[s[0]] = { n, wins, losses: n - wins, profit: wins * 8.9 - (n - wins) * 10 }; });
-      days.push({ day: dt.toISOString().slice(0, 10), label: dt.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }), w });
+      days.push({ day: iso(dt), label: dt.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }), w });
     }
     const tw = {}; wallets.forEach(x => tw[x.key] = x.today);
-    days.push({ day: "hoje", label: "hoje", w: tw });
+    days.push({ day: iso(new Date(now * 1000)), label: "hoje", w: tw });
     return { demo: true, now, asset: "GBP/USD", stake: 10, start_balance: 10000,
       model: { p_up: .44, ts: now - 25, ready: true },
       decision: { action: "AGUARDE", text: "Aguarde" },
-      account: { type: "treino", balance: 10000, day: 0 }, wallets, entries, days,
+      app_wallet: { balance: 10000 + wallets.reduce((a, w) => a + w.balance - 10000, 0), day: wallets.reduce((a, w) => a + w.today.profit, 0) }, wallets, entries, days,
       live: { ok: true, decimals: 5, price: 1.33461 + Math.sin(now / 7) * 0.00012,
         ticks: Array.from({ length: 300 }, (_, i) => [now - 300 + i, 1.33461 + Math.sin((now - 300 + i) / 7) * 0.00012 + Math.sin(i / 40) * 0.0003]),
         market: [["hoje", -0.71], ["ontem", 0.51], ["7 dias", -0.48], ["30 dias", 0.88], ["ano", 0.96]] } };
@@ -388,10 +422,10 @@ button { font: inherit; color: inherit; }
     const d = s.decision || {};
     const fd = $("fDecision"); fd.innerHTML = `<span class="big ${d.action === "COMPRA" ? "pos" : d.action === "VENDA" ? "neg" : ""}">${d.text || "—"}</span>`;
     fd.parentElement.classList.toggle("act-buy", d.action === "COMPRA"); fd.parentElement.classList.toggle("act-sell", d.action === "VENDA" || d.action === "SAIR");
-    const a = s.account || {};
-    $("fAccount").innerHTML = a.balance != null
-      ? `${(a.type || "").toUpperCase()} <span class="big">$${a.balance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span> <span class="${cls(a.day || 0)}" style="font-size:12px">${a.day ? (a.day > 0 ? "GREEN " : "LOSS ") + brl(a.day).replace("R$ ", "$") : "hoje $0"}</span>`
-      : "lendo o saldo...";
+    const aw = s.app_wallet;
+    $("fAccount").innerHTML = aw
+      ? `<span class="big">${brl(aw.balance, false)}</span> <span class="${cls(aw.day)}" style="font-size:12px">${Math.abs(aw.day) > .004 ? (aw.day > 0 ? "GREEN " : "LOSS ") + brl(aw.day) : "hoje R$ 0"}</span>`
+      : "—";
   }
 
   function renderTimeline(s) {
@@ -477,14 +511,80 @@ button { font: inherit; color: inherit; }
     svg += `<text x="${L}" y="${H - 6}" fill="#5d6a63" font-size="11">começo</text><text x="${Wd - R}" y="${H - 6}" text-anchor="end" fill="#5d6a63" font-size="11">hoje</text></svg>`;
     $("chart").innerHTML = svg;
     $("chartLegend").innerHTML = s.wallets.map(w => `<span><i style="background:${COLORS[w.key]}"></i>${w.key} ${brl(w.balance, false)}</span>`).join("");
-    $("days").innerHTML = days.slice().reverse().map(d => {
-      const vals = Object.values(d.w); const tot = vals.reduce((a, x) => a + (x.profit || 0), 0);
-      const nn = vals.reduce((a, x) => a + (x.n || 0), 0), wi = vals.reduce((a, x) => a + (x.wins || 0), 0), lo2 = vals.reduce((a, x) => a + (x.losses || 0), 0);
-      return `<div class="day"><div><div class="d">${d.label}</div><div class="meta">${nn} entradas${wi + lo2 ? " · " + Math.round(100 * wi / (wi + lo2)) + "% de acerto" : ""}</div></div>
-        <div class="${cls(tot)}" style="font-size:18px;font-weight:600">${brl(tot)}</div>
-        <div class="chips">${keys.map(k => d.w[k] ? `<span><i style="background:${COLORS[k]}"></i><span class="${cls(d.w[k].profit)}">${brl(d.w[k].profit).replace("R$ ", "")}</span></span>` : "").join("")}</div></div>`;
-    }).join("") || `<p class="sub">Os dias aparecem aqui conforme o app joga.</p>`;
+    renderCalendar(s);
   }
+
+  // ---------- agenda ----------
+  const MONTHS = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  let calMonth = null, selDay = null, dayCache = {}, dayLoading = null;
+  function dayTotals(d) {
+    const v = Object.values(d.w || {});
+    return { n: v.reduce((a, x) => a + (x.n || 0), 0), wins: v.reduce((a, x) => a + (x.wins || 0), 0),
+      losses: v.reduce((a, x) => a + (x.losses || 0), 0), profit: v.reduce((a, x) => a + (x.profit || 0), 0) };
+  }
+  function renderCalendar(s) {
+    const today = iso(new Date((s.now || Date.now() / 1000) * 1000));
+    if (!calMonth) calMonth = today.slice(0, 7);
+    if (!selDay) selDay = today;
+    const byDay = {}; (s.days || []).forEach(d => byDay[d.day] = d);
+    const [y, m] = calMonth.split("-").map(Number);
+    $("calTitle").textContent = `${MONTHS[m - 1]} ${y}`;
+    const first = new Date(y, m - 1, 1), nd = new Date(y, m, 0).getDate();
+    let mt = { n: 0, wins: 0, losses: 0, profit: 0 };
+    let html = ["dom","seg","ter","qua","qui","sex","sáb"].map(w => `<div class="wd">${w}</div>`).join("");
+    for (let i = 0; i < first.getDay(); i++) html += `<div class="cday blank"></div>`;
+    for (let d = 1; d <= nd; d++) {
+      const key = `${calMonth}-${String(d).padStart(2, "0")}`, info = byDay[key];
+      const t = info ? dayTotals(info) : null;
+      if (t) { mt.n += t.n; mt.wins += t.wins; mt.losses += t.losses; mt.profit += t.profit; }
+      const c = ["cday", t && t.profit > .004 ? "win" : t && t.profit < -.004 ? "loss" : "", key === today ? "today" : "", key === selDay ? "sel" : ""].join(" ");
+      html += `<button type="button" class="${c}" data-day="${key}" ${t || key === today ? "" : "disabled"}>
+        <span class="n">${d}${key === today ? " · hoje" : ""}</span>
+        ${t ? `<span class="r ${cls(t.profit)}">${brl(t.profit).replace("R$ ", "")}</span><span class="g">${t.wins}G ${t.losses}P</span>` : ""}</button>`;
+    }
+    $("calGrid").innerHTML = html;
+    $("calSub").innerHTML = mt.n ? `no mês: <b class="${cls(mt.profit)}">${brl(mt.profit)}</b> · ${mt.wins} ganhos e ${mt.losses} perdas · toque num dia para ver tudo` : "toque num dia para ver tudo o que aconteceu";
+    renderDay(s, byDay[selDay], selDay === today);
+  }
+  function renderDay(s, info, isToday) {
+    const dt = new Date(selDay + "T12:00:00");
+    $("dTitle").textContent = (isToday ? "Hoje, " : "") + dt.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
+    const t = info ? dayTotals(info) : { n: 0, wins: 0, losses: 0, profit: 0 };
+    $("dSub").innerHTML = t.n ? `<b class="${cls(t.profit)}" style="font-size:16px">${brl(t.profit)}</b> · ${t.n} entradas · ${t.wins} ganhos, ${t.losses} perdas${t.wins + t.losses ? " · " + Math.round(100 * t.wins / (t.wins + t.losses)) + "% de acerto" : ""}` : "nenhuma entrada neste dia";
+    $("dWallets").innerHTML = info ? s.wallets.filter(w => info.w[w.key]).map(w => { const x = info.w[w.key];
+      return `<span><i style="background:${COLORS[w.key]}"></i>${w.key} · ${w.name} <b class="${cls(x.profit)}">${brl(x.profit)}</b> <span style="color:var(--dim)">${x.wins}G ${x.losses}P</span></span>`; }).join("") : "";
+    let list;
+    if (isToday) list = s.entries;
+    else if (s.demo) list = demoDay(selDay);
+    else if (dayCache[selDay]) list = dayCache[selDay];
+    else {
+      list = null;
+      if (dayLoading !== selDay) {
+        dayLoading = selDay;
+        fetch("api/day?d=" + selDay, { cache: "no-store" }).then(r => r.json()).then(j => { dayCache[j.day || selDay] = j.entries || []; dayLoading = null; render(); })
+          .catch(() => { dayLoading = null; });
+      }
+    }
+    $("dList").innerHTML = list == null ? `<p class="sub">carregando...</p>` : list.slice().reverse().map(e => {
+      const v = e.status === "aberta" ? "aberta" : e.profit == null ? e.status : brl(e.profit);
+      return `<div class="d-row"><span class="t">${hhmm(e.ts)}</span>
+        <span>${e.side === "COMPRA" ? "▲ compra" : "▼ venda"} · ${pc(e.chance)}<span class="ws">${e.wallets.map(k => `<i style="background:${COLORS[k]}" title="${k}"></i>`).join("")}</span></span>
+        <span class="v ${e.profit != null ? cls(e.profit) : ""}">${v}</span></div>`;
+    }).join("") || `<p class="sub">Nenhuma entrada.</p>`;
+  }
+  function demoDay(day) {
+    let seed = Number(day.replace(/-/g, "")) % 9973; const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+    const base = new Date(day + "T09:00:00").getTime() / 1000, out = [];
+    for (let i = 0; i < 9; i++) { const won = rnd() < .55, ws = ["A","B","C","D","E"].filter(() => rnd() > .45);
+      out.push({ ts: base + i * 2700 + rnd() * 900, side: rnd() > .5 ? "COMPRA" : "VENDA", chance: .55 + rnd() * .1, wallets: ws.length ? ws : ["C"], status: won ? "ganhou" : "perdeu", profit: (won ? 8.9 : -10) * (ws.length || 1) }); }
+    return out;
+  }
+  document.addEventListener("click", ev => {
+    const b = ev.target.closest(".cday[data-day]"); if (b && !b.disabled) { selDay = b.dataset.day; render(); }
+  });
+  $("calPrev").addEventListener("click", () => { const [y, m] = calMonth.split("-").map(Number); const d = new Date(y, m - 2, 1); calMonth = iso(d).slice(0, 7); render(); });
+  $("calNext").addEventListener("click", () => { const [y, m] = calMonth.split("-").map(Number); const d = new Date(y, m, 1); calMonth = iso(d).slice(0, 7); render(); });
 
   let state = null;
   let lastPrice = null;

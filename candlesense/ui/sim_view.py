@@ -97,6 +97,16 @@ class SimState:
 
         return balances(self.past, self.today_profit(), [w.key for w in WALLETS])
 
+    def app_wallet(self) -> dict:
+        """Uma carteira só do app: R$ 10.000 + o resultado de todas as entradas de todas as carteiras."""
+        from ..history.simbook import START_BALANCE
+
+        bal = self.balances()
+        done = [e for es in self.entries.values() for e in es]
+        s = day_summary(done)
+        return {"balance": START_BALANCE + sum(v - START_BALANCE for v in bal.values()),
+                "day": s["profit"], "wins": s["wins"], "losses": s["losses"], "n": s["n"]}
+
     def days(self) -> list:
         """Todos os dias com entradas, do mais antigo para hoje: [{day, label, w}]."""
         from ..history.simbook import day_label
