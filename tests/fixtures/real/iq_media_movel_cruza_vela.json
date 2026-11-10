@@ -1,0 +1,16 @@
+{
+ "_nota": "A média móvel vermelha (fina e inclinada) encosta numa vela vermelha e as duas viravam um borrão largo demais, que era descartado: faltava uma vela na sequência e a leitura saía incerta. Painel de posições aberto (só 2 rótulos no eixo). Avatar e saldo borrados.",
+ "expect_ok": true,
+ "payout": 86,
+ "timer_seconds": 181,
+ "tempo_compra_s": 31,
+ "tempo_vela_s": 300,
+ "expiracao": "21:03",
+ "tolerancia": 3e-05,
+ "ultimas_velas": [
+  {"open": 1.109412, "close": 1.108281},
+  {"open": 1.108326, "close": 1.110871},
+  {"open": 1.110837, "close": 1.110758},
+  {"close": 1.11047}
+ ]
+}

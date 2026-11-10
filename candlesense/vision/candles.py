@@ -113,12 +113,43 @@ def _fill_occlusions(mask: np.ndarray) -> np.ndarray:
 def _blobs(mask: np.ndarray, color: str, max_w: int) -> tuple[list[_Blob], np.ndarray]:
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     blobs: list[_Blob] = []
+    next_label = n
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        if w > max_w or area < 2:
+        if area < 2:
             continue
+        if w > max_w and area < 0.5 * w * h:
+            # Largo demais: uma média móvel fina, inclinada, encostou numa vela.
+            # Tira o que é fino na vertical e aproveita os pedaços com cara de vela.
+            pieces, next_label = _split_wide(labels, i, int(x), int(y), int(w), int(h), max_w, next_label)
+            blobs += [_Blob(color, *p) for p in pieces]
+            continue
+        if w > max_w:
+            continue  # botão ou faixa larga (ex.: SUPPORT), não é vela
         blobs.append(_Blob(color, int(x), int(y), int(w), int(h), [i]))
     return _merge_vertical(blobs), labels
+
+
+def _split_wide(labels: np.ndarray, i: int, x: int, y: int, w: int, h: int, max_w: int,
+                next_label: int) -> tuple[list[tuple], int]:
+    """Separa velas de uma linha inclinada fina grudada nelas (muda ``labels`` no lugar)."""
+    sub = labels[y:y + h, x:x + w]
+    comp = (sub == i).astype(np.uint8)
+    k = max(5, int(round(max_w * 0.12)))  # mais alto que a espessura da linha
+    kept = cv2.morphologyEx(comp, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, k)))
+    sub[(comp > 0) & (kept == 0)] = 0
+    out = []
+    m, lab2, st2, _ = cv2.connectedComponentsWithStats(kept, connectivity=8)
+    for j in range(1, m):
+        bx, by, bw, bh, area = st2[j]
+        sel = lab2 == j
+        if bw > max_w or area < 2:
+            sub[sel] = 0
+            continue
+        sub[sel] = next_label
+        out.append((int(x + bx), int(y + by), int(bw), int(bh), [next_label]))
+        next_label += 1
+    return out, next_label
 
 
 def _merge_vertical(blobs: list[_Blob]) -> list[_Blob]:
