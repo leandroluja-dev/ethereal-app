@@ -99,10 +99,34 @@ class Updater:
         return True
 
 
+def _launcher(root: Path) -> Optional[Path]:
+    """O CandleSense.app da pasta do projeto (o mesmo do Dock), se existir."""
+    for app in (root / "CandleSense.app", Path.home() / "ethereal-app" / "CandleSense.app"):
+        if (app / "Contents" / "MacOS" / "CandleSense").exists():
+            return app
+    return None
+
+
 def restart() -> None:
-    """Reabre o próprio processo com o código novo (mesmo PID, mesmos argumentos)."""
+    """Reabre o app com o código novo.
+
+    No Mac, abre de novo o CandleSense.app (como um clique no Dock) e sai: o
+    lançador fecha esta cópia, atualiza e abre a nova com a tela liberada. Reabrir
+    o próprio processo (execv) deixava o painel travado no Mac, sem log.
+    Fora do Mac, ou sem o .app, reabre o processo.
+    """
     sys.stdout.flush()
     sys.stderr.flush()
+    app = _launcher(Path(__file__).resolve().parents[2]) if sys.platform == "darwin" else None
+    if app is not None:
+        try:
+            subprocess.Popen(["open", "-n", str(app)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            print("reabrindo pelo CandleSense.app", flush=True)
+            time.sleep(0.5)
+            os._exit(0)
+        except Exception as e:
+            print(f"não consegui reabrir pelo .app: {e!r}", flush=True)
     os.execv(sys.executable, [sys.executable, "-m", "candlesense", *sys.argv[1:]])
 
 
