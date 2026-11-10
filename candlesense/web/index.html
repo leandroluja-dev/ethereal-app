@@ -597,8 +597,8 @@ button { font: inherit; color: inherit; }
     $("hms").textContent = now.toLocaleTimeString("pt-BR");
     const stale = s.stale || (!s.demo && !L.ok);
     const oa = $("onair"); oa.classList.toggle("off", !!stale);
-    oa.lastChild.textContent = s.demo ? "EXEMPLO" : s.stale ? "PAROU DE LER" : L.ok ? "AO VIVO" : "LEITURA INCERTA";
-    $("age").textContent = s.stale ? `última leitura há ${s.stale} s` : s.asset ? `${s.asset} · lendo a tela da IQ` : "";
+    oa.lastChild.textContent = s.demo ? "EXEMPLO" : s.stale ? "PAROU DE LER" : L.lite ? "MODO LEVE" : L.ok ? "AO VIVO" : "LEITURA INCERTA";
+    $("age").textContent = s.stale ? `última leitura há ${s.stale} s` : !s.asset ? "" : L.lite ? `${s.asset} · velas do Twelve, 1 vez por minuto` : `${s.asset} · lendo a tela da IQ`;
     const dec = L.decimals || 5, ticks = L.ticks || [];
     const pe = $("price");
     if (L.price != null) {

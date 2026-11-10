@@ -483,13 +483,13 @@ def _restart_for_update(panel, src, store) -> None:
     restart()
 
 
-def _keep_awake() -> None:
+def _keep_awake(display: bool = True) -> None:
     """Mac acordado e com a tela ligada enquanto o app roda (a captura para se a tela apagar)."""
     import os
     import subprocess
 
     try:
-        subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())],
+        subprocess.Popen(["caffeinate"] + (["-d"] if display else []) + ["-i", "-w", str(os.getpid())],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"não consegui manter o Mac acordado: {e!r}", flush=True)
@@ -508,7 +508,7 @@ def _ask_feed_key(dados) -> None:
         print(f"twelvedata indisponível: {e!r}", flush=True)
 
 
-def _start_web(args):
+def _start_web(args, open_window: bool = True):
     """Página do app no navegador (tela cheia) e no celular, servida pelo Mac. Nunca derruba a leitura."""
     if getattr(args, "sem_pagina", False):
         return None
@@ -521,7 +521,7 @@ def _start_web(args):
         print(f"página: {local}" + (f" · no celular (mesmo Wi-Fi): {phone}" if phone else ""), flush=True)
         def open_if_needed():  # a página já aberta se reconecta sozinha: não abre outra aba
             time.sleep(4)
-            if not web.last_hit:
+            if open_window and not web.last_hit:
                 from .web.server import open_page
 
                 open_page(local)
@@ -587,8 +587,15 @@ def cmd_live(args) -> int:
         hide_python_dock_icon()
     if not _check_platform():
         return 2
-    _keep_awake()
-    web = _start_web(args) if APP_MODE else None
+    from .lite import lite_file
+
+    lite = APP_MODE and lite_file(args.dados).exists()
+    _keep_awake(display=not lite)  # no modo leve a tela pode apagar: só o Mac não dorme
+    web = _start_web(args, open_window=not lite) if APP_MODE else None
+    if lite:
+        from . import lite as lite_mode
+
+        return lite_mode.run(args, web)
     if APP_MODE and not args.sem_rede:
         _ask_feed_key(args.dados)
     from .platform.capture import open_window_source, timed_grab

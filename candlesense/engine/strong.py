@@ -129,6 +129,21 @@ class StrongMode:
         if not (EVAL_AFTER_S <= since_close <= EVAL_UNTIL_S) or (asset, last) in self._done:
             return None
         self._done.add((asset, last))
+        return self._measure(asset, last, now, r.payout_pct)
+
+    def measure_closed(self, asset: str, now: Optional[float] = None, payout: Optional[int] = None,
+                       ) -> Optional[float]:
+        """Modo leve (sem tela): mede a vela que acabou de fechar, se ela já está na fita."""
+        now = time.time() if now is None else now
+        last = int(now // 60) * 60 - 60
+        if (asset, last) in self._done or now - last - 60 > 45:
+            return None
+        if self.db.execute("SELECT 1 FROM fita WHERE asset=? AND start=?", (asset, last)).fetchone() is None:
+            return None
+        self._done.add((asset, last))
+        return self._measure(asset, last, now, payout)
+
+    def _measure(self, asset: str, last: int, now: float, payout: Optional[int]) -> Optional[float]:
         f = features(self.bars(asset, last))
         if f is None:
             return None
@@ -137,7 +152,7 @@ class StrongMode:
             return None
         price = self.db.execute("SELECT close FROM fita WHERE asset=? AND start=?", (asset, last)).fetchone()[0]
         self.db.execute("INSERT OR IGNORE INTO forte VALUES (?,?,?,?,?,?,NULL)",
-                        (asset, last, now, p, price, r.payout_pct))
+                        (asset, last, now, p, price, payout))
         self.db.commit()
         if p >= STRONG or p <= 1 - STRONG:
             lado = "COMPRA" if p >= 0.5 else "VENDA"
