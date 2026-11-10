@@ -360,12 +360,9 @@ def detect_candles(
     # Doji: a IQ desenha a vela com abertura = fechamento em cinza claro. Não entram na
     # escolha da sequência (só as coloridas), mas preenchem o buraco em _extend; sem isso
     # a sequência quebrava no doji e as velas mais novas ficavam de fora.
-    grey = cv2.inRange(hsv, (0, 0, 85), (180, 50, 235))
-    grey = _remove_long_lines(grey, line_len)
-    db, dl = _blobs(grey, "doji", max_w)
     colored = len(gb) + len(rb)
-    blobs = gb + rb + db
-    masks = [_profile(b, gl if b.color == "verde" else rl if b.color == "vermelha" else dl) for b in blobs]
+    blobs = gb + rb
+    masks = [_profile(b, gl if b.color == "verde" else rl) for b in blobs]
     widths = [_body_width(m) for m in masks]
 
     tall = [w for w, b in zip(widths[:colored], blobs[:colored]) if b.h >= 3 and w >= 2]
@@ -375,6 +372,18 @@ def detect_candles(
     bw = _mode(tall)
     wtol = max(1, int(round(0.3 * bw)))
     cand = [i for i, w in enumerate(widths[:colored]) if abs(w - bw) <= wtol]
+    # Doji cinza: só os traços da largura de uma vela (os pontinhos do mapa e textos ficam de fora,
+    # e são milhares: medir todos deixava a leitura lenta).
+    grey = cv2.inRange(hsv, (0, 0, 85), (180, 50, 235))
+    grey = _remove_long_lines(grey, line_len)
+    db, dl = _blobs(grey, "doji", max_w)
+    for b in db:
+        if b.w < bw - wtol or b.w > bw + wtol + 2 or b.h < 3:
+            continue
+        m = _profile(b, dl)
+        blobs.append(b)
+        masks.append(m)
+        widths.append(_body_width(m))
     if len(cand) < min_candles:
         det.reasons.append("larguras de vela inconsistentes")
         return det
