@@ -167,3 +167,20 @@ class WebServer:
     def close(self) -> None:
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+def open_page(url: str = f"http://localhost:{PORT}") -> None:
+    """Abre a página como janela própria (modo app do Chrome, sem abas nem barra), senão no navegador."""
+    import subprocess
+    import sys
+    import webbrowser
+
+    if sys.platform == "darwin":
+        for app in ("/Applications/Google Chrome.app", str(Path.home() / "Applications/Google Chrome.app")):
+            if Path(app).exists():
+                try:
+                    subprocess.Popen(["open", "-na", app, "--args", f"--app={url}", "--start-maximized"])
+                    return
+                except OSError:
+                    break
+    webbrowser.open(url)

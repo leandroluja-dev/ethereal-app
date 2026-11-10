@@ -408,9 +408,9 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
         extras.chart = not extras.chart
         act = "redesenhar"
     if key == ord("w"):
-        import webbrowser
+        from .web.server import open_page
 
-        webbrowser.open("http://localhost:8765")
+        open_page()
     if key == ord("e") and sides is not None:
         sides.visible = not sides.visible
         act = "redesenhar"
@@ -515,9 +515,9 @@ def _start_web(args):
         def open_if_needed():  # a página já aberta se reconecta sozinha: não abre outra aba
             time.sleep(4)
             if not web.last_hit:
-                import webbrowser
+                from .web.server import open_page
 
-                webbrowser.open(local)
+                open_page(local)
 
         import threading
 
