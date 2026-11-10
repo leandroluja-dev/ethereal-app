@@ -300,7 +300,7 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
     sound = None
     all_entries = {}
     for spec in WALLETS:
-        if spec.cut == RISK_CUT and now - RISK_CUT_SINCE < 86400 * 2:
+        if spec.tag == "RISCO" and now - RISK_CUT_SINCE < 86400 * 2:
             # o corte subiu de 55% para 58% às 18h05 de 10/11: as entradas de antes continuam como foram
             entries = [e for e in strong.entries(day_start(now), threshold=OLD_RISK_CUT, now=now, mode=spec.mode)
                        if e["start"] < RISK_CUT_SINCE or e["chance"] >= RISK_CUT]

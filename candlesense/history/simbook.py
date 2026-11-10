@@ -36,6 +36,8 @@ class SimBook:
     def __init__(self, db) -> None:
         self.db = db
         self.db.executescript(SCHEMA)
+        # Conserto de 10/11/2026: um erro fez a carteira B (corte 58%) registrar entradas de 55-57%.
+        self.db.execute("DELETE FROM sim_hist WHERE wallet='B' AND chance < 0.58")
         self.db.commit()
         self._past = None
         self._past_at = 0.0
