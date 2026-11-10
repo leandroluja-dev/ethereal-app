@@ -49,6 +49,9 @@ def hide_python_dock_icon() -> None:
 
 
 _CLOSED: set[str] = set()   # janelas fechadas pelo botão vermelho
+_LOGGED: set[str] = set()
+_LOGGED_OK: set[str] = set()
+_LOGGED_ERR: set[str] = set()
 _TARGET = None
 _ACTIVATED = False
 
@@ -97,7 +100,13 @@ def window_buttons(title: str) -> bool:
 
         app = NSApplication.sharedApplication()
         want = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
-        for w in app.windows():
+        wins = list(app.windows())
+        if title not in _LOGGED:
+            _LOGGED.add(title)
+            print("janelas: " + "; ".join(
+                f"'{w.title()}' mask={int(w.styleMask())} vis={bool(w.isVisible())} cls={w.className()}"
+                for w in wins), flush=True)
+        for w in wins:
             if str(w.title() or "") != title:
                 continue
             if (w.styleMask() & want) != want:
@@ -122,9 +131,16 @@ def window_buttons(title: str) -> bool:
                 _ACTIVATED = True
                 app.activateIgnoringOtherApps_(True)
                 w.makeKeyAndOrderFront_(None)
+            if title not in _LOGGED_OK:
+                _LOGGED_OK.add(title)
+                cb = w.standardWindowButton_(0)
+                print(f"botões ligados em '{title}': mask={int(w.styleMask())} "
+                      f"fechar={'ok' if cb is not None and cb.isEnabled() else 'sem botão'}", flush=True)
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        if title not in _LOGGED_ERR:
+            _LOGGED_ERR.add(title)
+            print(f"botões da janela '{title}': erro {e!r}", flush=True)
     return False
 
 

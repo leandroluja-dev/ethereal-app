@@ -251,6 +251,44 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
     return act
 
 
+def _open_source(win, open_window_source):
+    """Captura da janela, com o próximo quadro sendo capturado enquanto o atual é lido."""
+    from .platform.capture import PrefetchSource
+
+    src = open_window_source(win)
+    try:
+        return PrefetchSource(src)
+    except Exception as e:
+        print(f"captura em paralelo indisponível: {e!r}", flush=True)
+        return src
+
+
+def _restart_for_update(panel, src, store) -> None:
+    """Versão nova baixada: mostra 'Atualizando...' no painel e reabre o app sozinho."""
+    from .platform.selfupdate import loading_frame, restart
+
+    print("reabrindo com a versão nova", flush=True)
+    if panel is not None:
+        t_end = time.monotonic() + 1.2
+        while time.monotonic() < t_end:
+            try:
+                cv2.imshow(panel.NAME, loading_frame())
+                cv2.waitKey(40)
+            except Exception:
+                break
+    for fn in (src.close, store.close):
+        try:
+            fn()
+        except Exception:
+            pass
+    try:
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+    except Exception:
+        pass
+    restart()
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import close_other_instances, hide_python_dock_icon
@@ -273,7 +311,7 @@ def cmd_live(args) -> int:
                 time.sleep(0.5)
                 win = _find_window_or_wait(wait=True)
 
-    src = open_window_source(win)
+    src = _open_source(win, open_window_source)
     print(f"Captura: {src.name}. Ctrl+C para sair.")
     reader = ChartReader(best_engine(args.ocr))
     engine = _engine(args)
@@ -281,6 +319,11 @@ def cmd_live(args) -> int:
     from .history.store import Store
 
     store = Store(Path(args.dados) / "candlesense.db")
+    updater = None
+    if APP_MODE:
+        from .platform.selfupdate import Updater
+
+        updater = Updater(Path(__file__).resolve().parents[1]).start()
     engine.calibration = learn(store.predictions())
     last_learn = time.monotonic()
     from .history.wallet import WalletTracker
@@ -318,6 +361,8 @@ def cmd_live(args) -> int:
     try:
         while True:
             t0 = time.perf_counter()
+            if updater is not None and updater.ready.is_set():
+                _restart_for_update(panel, src, store)
             img, cap_ms = timed_grab(src)
             if img is None:
                 fails += 1
@@ -325,7 +370,8 @@ def cmd_live(args) -> int:
                     print("\nSem imagem da janela (minimizada ou fechada?). Tentando de novo...")
                 if fails >= 30:
                     win = _find_window_or_wait(wait=True)
-                    src = open_window_source(win)
+                    src.close()
+                    src = open_window_source(win)  # sem captura em paralelo, por segurança
                     reader.reset()
                     engine.reset()
                     fails = 0
