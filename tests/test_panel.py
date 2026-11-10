@@ -117,3 +117,26 @@ def test_button_hover_and_press_change_look():
     finally:
         pn.BUTTON_STATE["carteira"] = None
     assert looks[0] < looks[1] < looks[2]
+
+
+def test_timeframe_hint_line():
+    """A linha do melhor tempo de vela aparece abaixo do cabeçalho e aumenta o painel."""
+    from candlesense.ui.panel import PanelExtras
+
+    r = reading(candles_from_path(zigzag_up()), timeframe=300)
+    d = RuleEngine().evaluate(r)
+    base = render(d, r, extras=PanelExtras()).shape[0]
+    a = render(d, r, extras=PanelExtras(tf_advice="Melhor tempo de vela até agora: 2 min", tf_best=120))
+    b = render(d, r, extras=PanelExtras(tf_advice="Ainda poucos sinais para escolher o tempo de vela"))
+    assert a.shape[0] > base and b.shape[0] > base
+
+
+def test_tf_advice_from_store(tmp_path):
+    import candlesense.__main__ as m
+    from candlesense.history.store import Store
+    from candlesense.ui.panel import PanelExtras
+
+    m._tf_t = -1e9
+    ex = PanelExtras()
+    m._tf_advice(ex, Store(tmp_path / "x.db"))
+    assert ex.tf_advice and ex.tf_best is None

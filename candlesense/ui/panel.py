@@ -193,6 +193,9 @@ class PanelExtras:
     open_line: Optional[str] = None
     # operação aberta: amount, direction (COMPRA/VENDA/None), entry_price, payout, seconds_left
     open_trade: Optional[dict] = None
+    # melhor tempo de vela pelo histórico: frase pronta e o tempo (s) recomendado, se houver
+    tf_advice: Optional[str] = None
+    tf_best: Optional[int] = None
     exit_alert: Optional[str] = None
     details: bool = False       # explicação dos módulos (tecla d)
     chart: bool = True          # gráfico ao vivo
@@ -296,6 +299,29 @@ def _header(c: _Canvas, reading: Optional[ChartReading], ex: PanelExtras) -> Non
     if ex.buttons:
         draw_button(c)
     c.y = c.px(66)
+    _tf_hint(c, reading, ex)
+
+
+def _tf_hint(c: _Canvas, reading: Optional[ChartReading], ex: PanelExtras) -> None:
+    """Linha com o melhor tempo de vela pelo histórico, logo abaixo do tempo de vela atual."""
+    if not ex.tf_advice:
+        return
+    cur = reading.timeframe_s if reading is not None else None
+    if ex.tf_best:
+        best = fmt_duration(ex.tf_best)
+        if cur and cur != ex.tf_best:
+            txt, col, icol = f"Melhor tempo pelo histórico: {best} (você está em {fmt_duration(cur)})", ORANGE, ORANGE
+        else:
+            txt, col, icol = f"Melhor tempo pelo histórico: {best}" + (" (é o atual)" if cur else ""), GREEN, GREEN
+    else:
+        txt, col, icol = ex.tf_advice, DIM, FAINT
+    y0 = c.u - 6
+    _icon(c, "bars", PAD, y0 + 1, icol, 13)
+    f = c.font(12)
+    lines = _wrap(c.d, txt, f, c.px(W - 2 * PAD - 20))[:2]
+    for i, ln in enumerate(lines):
+        c.at(PAD + 20, y0 + i * 16, ln, 12, col, "medium" if ex.tf_best else "regular")
+    c.y = c.px(y0 + 16 * len(lines) + 10)
 
 
 def _price(c: _Canvas, reading: ChartReading, cs: list) -> None:

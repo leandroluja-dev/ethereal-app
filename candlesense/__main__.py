@@ -180,9 +180,31 @@ def _panel_place(win) -> tuple[int, int]:
     return int(win.x + 70), int(win.y + 110)
 
 
+_tf_t = -1e9
+
+
+def _tf_advice(extras, store) -> None:
+    """Melhor tempo de vela pelo histórico (consulta 30 dias: no máximo 1 vez por minuto)."""
+    global _tf_t
+    if time.monotonic() - _tf_t < 60:
+        return
+    _tf_t = time.monotonic()
+    try:
+        from .history.timeframes import compare
+
+        month = time.time() - 30 * 86400
+        adv = compare(store.signals(since=month), store.predictions(since=month), store.trades(since=month))
+        extras.tf_advice = adv.text if adv else None
+        extras.tf_best = adv.best.tf if adv and adv.best else None
+    except Exception as e:  # o conselho nunca derruba o painel
+        print(f"tempo de vela: {e!r}", flush=True)
+
+
 def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
     """Atualiza a faixa da carteira no painel e a tela da carteira (se aberta)."""
     from .history.wallet import day_start, summarize
+
+    _tf_advice(extras, store)
 
     since = day_start()
     days = summarize(store.trades(since=since))
