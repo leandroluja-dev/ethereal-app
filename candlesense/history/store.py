@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS signals (
     action TEXT NOT NULL, prob REAL, best_h INTEGER, price REAL, payout INTEGER,
     outcome INTEGER
 );
+CREATE TABLE IF NOT EXISTS balances (
+    ts REAL NOT NULL, account TEXT NOT NULL, balance REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bal ON balances (account, ts);
 CREATE INDEX IF NOT EXISTS idx_pred_open ON predictions (asset, tf, candle_end);
 CREATE INDEX IF NOT EXISTS idx_trades_day ON trades (opened);
 """
@@ -147,6 +151,19 @@ class Store:
         sets = ", ".join(f"{k}=?" for k in kw)
         self.db.execute(f"UPDATE trades SET {sets} WHERE id=?", (*kw.values(), trade_id))
         self.db.commit()
+
+    def log_balance(self, ts: float, account: str, balance: float) -> None:
+        """Saldo confirmado (para a evolução da carteira por dia)."""
+        self.db.execute("INSERT INTO balances VALUES (?,?,?)", (ts, account, balance))
+        self.db.commit()
+
+    def balances(self, since: float = 0.0, account: Optional[str] = None) -> list[tuple[float, str, float]]:
+        q = "SELECT ts, account, balance FROM balances WHERE ts >= ?"
+        args: list = [since]
+        if account:
+            q += " AND account = ?"
+            args.append(account)
+        return [tuple(r) for r in self.db.execute(q + " ORDER BY ts", args)]
 
     def trades(self, since: float = 0.0, account: Optional[str] = None) -> list[dict]:
         q = "SELECT * FROM trades WHERE opened >= ?"
