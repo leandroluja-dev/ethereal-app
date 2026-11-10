@@ -854,7 +854,7 @@ class PanelWindow:
         if self._frames in (1, 3, 10) or self._frames % 50 == 0:
             from ..platform.appmode import window_buttons
 
-            window_buttons(self.NAME)  # barra normal do Mac: fechar e minimizar
+            window_buttons(self.NAME, resizable=True)  # barra do Mac: fechar, minimizar e puxar o canto
         if not self._placed and self.place is not None:
             try:
                 self.cv2.moveWindow(self.NAME, *self.place)

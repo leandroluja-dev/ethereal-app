@@ -171,7 +171,7 @@ def test_panel_window_keeps_last_good_chart(monkeypatch):
 
     w = pn.PanelWindow.__new__(pn.PanelWindow)
     w.cv2, w.scale, w._frames, w._placed, w.place = FakeCv2(), 1.0, 99, True, None
-    monkeypatch.setattr("candlesense.platform.appmode.window_buttons", lambda name: None)
+    monkeypatch.setattr("candlesense.platform.appmode.window_buttons", lambda name, **k: None)
     ok = reading(candles_from_path(zigzag_up()), timeframe=60)
     bad = reading(candles_from_path(zigzag_up()), ok=False, timeframe=60)
     ex = pn.PanelExtras()

@@ -84,7 +84,7 @@ def reopen(title: str) -> None:
     _CLOSED.discard(title)
 
 
-def window_buttons(title: str) -> bool:
+def window_buttons(title: str, resizable: bool = False) -> bool:
     """Liga a barra normal do macOS (fechar e minimizar) na janela com esse título.
 
     A janela do OpenCV aparece com os botões cinza (desativados). Aqui o
@@ -100,6 +100,8 @@ def window_buttons(title: str) -> bool:
 
         app = NSApplication.sharedApplication()
         want = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
+        if resizable:
+            want |= 1 << 3  # NSWindowStyleMaskResizable
         wins = list(app.windows())
         if title not in _LOGGED:
             _LOGGED.add(title)
@@ -114,6 +116,11 @@ def window_buttons(title: str) -> bool:
             if (int(w.styleMask()) & want) != want:
                 w.setStyleMask_(int(w.styleMask()) | want)
             w.setLevel_(NSFloatingWindowLevel)
+            if resizable:
+                # O OpenCV trava o tamanho da janela (mínimo = máximo): solta para dar para puxar o canto.
+                w.setContentMinSize_((240, 240))
+                w.setContentMaxSize_((10000, 10000))
+                w.setShowsResizeIndicator_(True)
             close_btn = w.standardWindowButton_(0)   # NSWindowCloseButton
             mini_btn = w.standardWindowButton_(1)    # NSWindowMiniaturizeButton
             if close_btn is not None:
@@ -136,6 +143,9 @@ def window_buttons(title: str) -> bool:
             if title not in _LOGGED_OK:
                 _LOGGED_OK.add(title)
                 cb = w.standardWindowButton_(0)
+                mn, mx = w.contentMinSize(), w.contentMaxSize()
+                print(f"tamanho em '{title}': min={int(mn.width)}x{int(mn.height)} "
+                      f"max={int(mx.width)}x{int(mx.height)}", flush=True)
                 print(f"botões ligados em '{title}': mask={int(w.styleMask())} "
                       f"fechar={'ok' if cb is not None and cb.isEnabled() else 'sem botão'}", flush=True)
             return True

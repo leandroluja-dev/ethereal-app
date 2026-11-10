@@ -109,6 +109,10 @@ def _find_window_or_wait(wait: bool):
     while True:
         win = find_iq_window()
         if win is not None:
+            if APP_MODE and shown:
+                from .platform import appmode
+
+                appmode._ACTIVATED = False  # o painel vem para a frente quando aparecer
             print(f"Janela encontrada: {win.owner} - '{win.title}' ({win.kind}, {int(win.w)}x{int(win.h)})")
             return win
         if not wait:
@@ -120,7 +124,43 @@ def _find_window_or_wait(wait: bool):
 
                 notify("Abra a IQ Option: o painel aparece assim que o gráfico estiver na tela.")
             shown = True
+        if APP_MODE:
+            if not _waiting_window():
+                print("fechado enquanto esperava a IQ Option", flush=True)
+                raise SystemExit(0)
+        else:
+            time.sleep(1.0)
+
+
+def _waiting_window() -> bool:
+    """Janela 'Esperando a IQ Option' (sem ela, clicar no ícone parecia não fazer nada).
+
+    Fica 1 s na tela por chamada. Devolve False se a pessoa fechou a janela.
+    """
+    from .platform.appmode import was_closed, window_buttons
+    from .platform.selfupdate import loading_frame
+
+    name = "CandleSense"
+    st = _waiting_window.__dict__
+    try:
+        if not st.get("open"):
+            cv2.namedWindow(name, cv2.WINDOW_AUTOSIZE)
+            st["open"], st["n"] = True, 0
+        t_end = time.monotonic() + 1.0
+        while time.monotonic() < t_end:
+            cv2.imshow(name, loading_frame("Esperando a IQ Option...", 460, 140,
+                                           "abra a IQ: o painel aparece sozinho"))
+            st["n"] += 1
+            if st["n"] in (2, 10, 40):
+                window_buttons(name)
+            k = cv2.waitKey(50) & 0xFF
+            if k in (27, ord("q")):
+                return False
+            if was_closed(name):
+                return False
+    except cv2.error:
         time.sleep(1.0)
+    return True
 
 
 def _check_platform() -> bool:

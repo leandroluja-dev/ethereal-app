@@ -130,7 +130,8 @@ def restart() -> None:
     os.execv(sys.executable, [sys.executable, "-m", "candlesense", *sys.argv[1:]])
 
 
-def loading_frame(text: str = "Atualizando o CandleSense...", w: int = 420, h: int = 140):
+def loading_frame(text: str = "Atualizando o CandleSense...", w: int = 420, h: int = 140,
+                  sub: str = "o app reabre sozinho em instantes"):
     """Quadro simples de 'carregando' para mostrar no painel antes de reabrir."""
     import cv2
     import numpy as np
@@ -138,7 +139,7 @@ def loading_frame(text: str = "Atualizando o CandleSense...", w: int = 420, h: i
     img = np.zeros((h, w, 3), np.uint8)
     t = time.monotonic()
     cv2.putText(img, text, (24, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(img, "o app reabre sozinho em instantes", (24, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+    cv2.putText(img, sub, (24, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                 (152, 152, 159), 1, cv2.LINE_AA)
     x = int((t * 160) % (w - 80))
     cv2.rectangle(img, (24 + x // 2, 116), (24 + x // 2 + 60, 120), (140, 199, 52), -1)
