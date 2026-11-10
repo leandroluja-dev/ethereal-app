@@ -292,7 +292,7 @@ def _extend(main: list[int], blobs: list[_Blob], widths: list[int], max_w: int,
     # Linha vertical contínua (hora da compra/expiração) é bem mais alta que qualquer vela.
     max_h = 1.3 * max(blobs[i].h for i in main)
 
-    def find_at(x: float, ref: _Blob) -> int | None:
+    def find_at(x: float, ref: _Blob, direction: int, depth: int = 0) -> int | None:
         best: tuple[float, int] | None = None
         for i, b in enumerate(blobs):
             if i in used or i in dashed or widths[i] > max_w or b.h > max_h:
@@ -300,14 +300,26 @@ def _extend(main: list[int], blobs: list[_Blob], widths: list[int], max_w: int,
             if max(b.y - (ref.y + ref.h), ref.y - (b.y + b.h), 0) > max_vgap:
                 continue
             d = abs(b.cx - x)
-            if d <= tol and (best is None or d < best[0]):
+            if d > tol:
+                continue
+            if b.color == "doji":
+                # doji cinza só tapa buraco: precisa de vela colorida logo depois (até 2 doji seguidos);
+                # na ponta, um traço cinza pode ser o cronômetro ou a linha de expiração.
+                if depth >= 2:
+                    continue
+                used.add(i)
+                nxt = find_at(b.cx + direction * pitch, b, direction, depth + 1)
+                used.discard(i)
+                if nxt is None:
+                    continue
+            if best is None or d < best[0] or (blobs[best[1]].color == "doji" and b.color != "doji"):
                 best = (d, i)
         return best[1] if best else None
 
     for direction in (1, -1):
         while True:
             ref = main[-1] if direction == 1 else main[0]
-            i = find_at(blobs[ref].cx + direction * pitch, blobs[ref])
+            i = find_at(blobs[ref].cx + direction * pitch, blobs[ref], direction)
             if i is None:
                 break
             used.add(i)
@@ -345,17 +357,24 @@ def detect_candles(
 
     gb, gl = _blobs(green, "verde", max_w)
     rb, rl = _blobs(red, "vermelha", max_w)
-    blobs = gb + rb
-    masks = [_profile(b, gl if b.color == "verde" else rl) for b in blobs]
+    # Doji: a IQ desenha a vela com abertura = fechamento em cinza claro. Não entram na
+    # escolha da sequência (só as coloridas), mas preenchem o buraco em _extend; sem isso
+    # a sequência quebrava no doji e as velas mais novas ficavam de fora.
+    grey = cv2.inRange(hsv, (0, 0, 85), (180, 50, 235))
+    grey = _remove_long_lines(grey, line_len)
+    db, dl = _blobs(grey, "doji", max_w)
+    colored = len(gb) + len(rb)
+    blobs = gb + rb + db
+    masks = [_profile(b, gl if b.color == "verde" else rl if b.color == "vermelha" else dl) for b in blobs]
     widths = [_body_width(m) for m in masks]
 
-    tall = [w for w, b in zip(widths, blobs) if b.h >= 3 and w >= 2]
+    tall = [w for w, b in zip(widths[:colored], blobs[:colored]) if b.h >= 3 and w >= 2]
     if len(tall) < min_candles:
         det.reasons.append("poucas velas coloridas na tela")
         return det
     bw = _mode(tall)
     wtol = max(1, int(round(0.3 * bw)))
-    cand = [i for i, w in enumerate(widths) if abs(w - bw) <= wtol]
+    cand = [i for i, w in enumerate(widths[:colored]) if abs(w - bw) <= wtol]
     if len(cand) < min_candles:
         det.reasons.append("larguras de vela inconsistentes")
         return det

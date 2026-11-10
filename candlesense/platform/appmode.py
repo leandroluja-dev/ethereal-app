@@ -109,8 +109,16 @@ def window_buttons(title: str) -> bool:
         for w in wins:
             if str(w.title() or "") != title:
                 continue
-            if (w.styleMask() & want) != want:
-                w.setStyleMask_(w.styleMask() | want)
+            if int(w.styleMask()) & (1 << 14):  # tela cheia (botão verde): volta ao tamanho da imagem
+                w.toggleFullScreen_(None)
+            mask = (int(w.styleMask()) | want) & ~8  # sem "redimensionável": a janela segue a imagem
+            if mask != int(w.styleMask()):
+                w.setStyleMask_(mask)
+            zoom_btn = w.standardWindowButton_(2)    # NSWindowZoomButton (verde)
+            if zoom_btn is not None:
+                zoom_btn.setEnabled_(False)
+            if w.isZoomed():
+                w.zoom_(None)
             w.setLevel_(NSFloatingWindowLevel)
             close_btn = w.standardWindowButton_(0)   # NSWindowCloseButton
             mini_btn = w.standardWindowButton_(1)    # NSWindowMiniaturizeButton
