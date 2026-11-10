@@ -56,8 +56,11 @@ BLACK = (0, 0, 0)
 HEAD_COLOR = {COMPRA: GREEN, VENDA: RED, NAO_ENTRAR: FG, INCERTA: ORANGE}
 
 _FONT_DIR = Path(__file__).with_name("fonts")
-_WEIGHTS = {"regular": "Inter-Regular.otf", "medium": "Inter-Medium.otf",
-            "semibold": "Inter-SemiBold.otf", "bold": "Inter-Bold.otf"}
+# Manrope (fina e geométrica, como a referência); Inter fica de reserva.
+_WEIGHTS = {"light": "Manrope-Light.ttf", "regular": "Manrope-Regular.ttf", "medium": "Manrope-Medium.ttf",
+            "semibold": "Manrope-SemiBold.ttf", "bold": "Manrope-Bold.ttf"}
+_INTER = {"light": "Inter-Regular.otf", "regular": "Inter-Regular.otf", "medium": "Inter-Medium.otf",
+          "semibold": "Inter-SemiBold.otf", "bold": "Inter-Bold.otf"}
 _FALLBACK = {
     False: ["/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/arial.ttf"],
@@ -70,11 +73,12 @@ _FALLBACK = {
 def _font(size: int, bold=False):
     """Fonte Inter. ``bold`` aceita True/False ou o peso: regular, medium, semibold, bold."""
     weight = bold if isinstance(bold, str) else ("bold" if bold else "regular")
-    path = _FONT_DIR / _WEIGHTS.get(weight, _WEIGHTS["regular"])
-    try:
-        return ImageFont.truetype(str(path), max(1, size))
-    except OSError:
-        pass
+    for table in (_WEIGHTS, _INTER):
+        path = _FONT_DIR / table.get(weight, table["regular"])
+        try:
+            return ImageFont.truetype(str(path), max(1, size))
+        except OSError:
+            pass
     for p in _FALLBACK[weight in ("semibold", "bold")]:
         if os.path.exists(p):
             try:

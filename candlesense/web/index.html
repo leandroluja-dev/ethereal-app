@@ -1,0 +1,475 @@
+<title>CandleSense</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap">
+<style>
+/* Layout: trilho de ícones | barra lateral (números, abas, carteiras) | área principal (filtros + linha do tempo).
+   No celular tudo vira uma coluna e a linha do tempo fica vertical. Visual único, escuro (vidro sobre verde). */
+:root {
+  color-scheme: dark;
+  --bg-0: #040806;
+  --bg-1: #0b1f14;
+  --glass-hi: rgba(255,255,255,.085);
+  --glass-lo: rgba(255,255,255,.025);
+  --stroke: rgba(255,255,255,.09);
+  --stroke-hi: rgba(255,255,255,.16);
+  --fg: #eef3ef;
+  --dim: #9aa69f;
+  --faint: #5d6a63;
+  --green: #3fd174;
+  --green-deep: #0f5e31;
+  --red: #ef4b4b;
+  --red-deep: #6d1519;
+  --amber: #f3a43c;
+  --font: "Manrope", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --r-lg: 22px;
+  --r-md: 16px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; color: var(--fg); font-family: var(--font); font-weight: 400;
+  background:
+    radial-gradient(1200px 700px at 8% -10%, #154b2c 0%, rgba(21,75,44,0) 60%),
+    radial-gradient(900px 600px at 100% 0%, #0d2a1b 0%, rgba(13,42,27,0) 60%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0) 70%);
+  background-color: var(--bg-0);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+.app {
+  display: grid; grid-template-columns: 64px 300px minmax(0,1fr); gap: 16px;
+  min-height: 100%;
+  padding-block: 18px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.glass {
+  background: linear-gradient(150deg, var(--glass-hi), var(--glass-lo) 70%);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 20px 40px -24px rgba(0,0,0,.8);
+}
+
+/* trilho */
+.rail { display: flex; flex-direction: column; align-items: center; gap: 14px; padding-block: 18px; }
+.rail .mark { width: 30px; height: 30px; margin-bottom: 10px; }
+.rail button {
+  width: 42px; height: 42px; border-radius: 14px; border: 1px solid transparent; background: transparent;
+  display: grid; place-items: center; color: var(--dim); cursor: pointer;
+}
+.rail button.on { background: linear-gradient(150deg, #3fd174, #1b7a43); color: #04140b; border-color: rgba(255,255,255,.2); }
+.rail button:hover:not(.on) { border-color: var(--stroke-hi); color: var(--fg); }
+.rail .spacer { flex: 1; }
+
+/* barra lateral */
+.side { padding: 20px 18px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 500; letter-spacing: -.01em; }
+.brand svg { width: 18px; height: 22px; }
+.stats { display: grid; grid-template-columns: auto auto 1fr; gap: 18px; align-items: end; padding-bottom: 16px; border-bottom: 1px solid var(--stroke); }
+.stat b { display: block; font-size: 28px; font-weight: 400; line-height: 1; }
+.stat span { font-size: 11px; color: var(--dim); }
+.stat.g b { color: var(--green); } .stat.r b { color: var(--red); }
+.stat.pct { text-align: right; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 16px; background: rgba(0,0,0,.28); border: 1px solid var(--stroke); }
+.seg button { border: 0; background: transparent; border-radius: 12px; padding: 9px 0; cursor: pointer; color: var(--dim); font-weight: 500; }
+.seg button.on { color: var(--fg); background: linear-gradient(150deg, rgba(255,255,255,.16), rgba(255,255,255,.05)); box-shadow: 0 1px 0 rgba(255,255,255,.12) inset; }
+
+.tree { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tree .root { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 2px 10px; }
+.tree .root .lbl { display: flex; gap: 8px; align-items: center; color: var(--fg); }
+.tree .root .val { font-size: 15px; font-weight: 600; }
+.tree .kids { position: relative; margin-left: 9px; padding-left: 18px; border-left: 1px solid var(--stroke-hi); display: flex; flex-direction: column; gap: 4px; }
+.leaf { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 10px; border-radius: 12px; }
+.leaf::before { content: ""; position: absolute; left: -18px; top: 18px; width: 12px; border-top: 1px solid var(--stroke-hi); }
+.leaf .nm { display: flex; align-items: center; gap: 8px; font-size: 14px; min-width: 0; }
+.leaf .nm i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.leaf .cnt { font-size: 11px; color: var(--dim); align-self: center; justify-self: end; padding: 2px 7px; border-radius: 10px; border: 1px solid var(--stroke); }
+.leaf .sub { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); padding-left: 16px; }
+.leaf.live { background: rgba(63,209,116,.07); }
+.leaf.live .nm { color: var(--green); }
+.leaf .tag { font-size: 9px; letter-spacing: .08em; color: var(--amber); border: 1px solid rgba(243,164,60,.45); border-radius: 6px; padding: 1px 4px; }
+.pos { color: var(--green); } .neg { color: var(--red); }
+.side .foot { margin-top: auto; font-size: 11px; color: var(--faint); line-height: 1.5; }
+#phone { display: block; margin-top: 8px; color: var(--dim); font-size: 12px; user-select: all; }
+
+/* principal */
+.main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.filters { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+.filter { padding: 12px 16px; border-radius: var(--r-md); min-width: 0; }
+.filter small { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+.filter div { display: flex; align-items: center; gap: 8px; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filter .big { font-size: 15px; font-weight: 600; }
+
+.stage { position: relative; flex: 1; min-height: 560px; padding: 18px; overflow: hidden; }
+.stage::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1.2px); background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,.4) 100%);
+}
+.stage-head { position: relative; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.stage-head h2 { margin: 0; font-size: 18px; font-weight: 500; }
+.stage-head .legend { display: flex; gap: 14px; font-size: 12px; color: var(--dim); }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+.ruler { position: relative; height: 46px; border-radius: 16px; display: flex; align-items: center; padding: 0 12px 0 52px; }
+.ruler .back { position: absolute; left: 8px; width: 32px; height: 32px; border-radius: 11px; border: 1px solid var(--stroke); background: rgba(255,255,255,.04); display: grid; place-items: center; color: var(--dim); }
+.ticks { position: relative; flex: 1; height: 100%; }
+.tick { position: absolute; bottom: 8px; width: 1px; height: 6px; background: var(--faint); }
+.tick.big { height: 10px; background: var(--dim); }
+.tlabel { position: absolute; top: 6px; transform: translateX(-50%); font-size: 13px; color: var(--fg); white-space: nowrap; }
+.tlabel.now { color: var(--green); font-weight: 600; }
+.nowband { position: absolute; top: 0; bottom: 0; width: 70px; transform: translateX(-50%); background: radial-gradient(closest-side, rgba(63,209,116,.25), rgba(63,209,116,0)); }
+.dot { position: absolute; bottom: 4px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; }
+
+.board { position: relative; height: 330px; }
+.board > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.tcard {
+  position: absolute; width: 150px; padding: 10px 12px 9px; border-radius: 14px; color: var(--fg);
+  background: linear-gradient(150deg, rgba(255,255,255,.17), rgba(255,255,255,.05) 75%);
+  border: 1px solid var(--stroke-hi);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 1px 0 rgba(255,255,255,.18) inset, 0 24px 40px -22px rgba(0,0,0,.9);
+}
+.tcard.win { background: linear-gradient(160deg, rgba(63,209,116,.30), rgba(63,209,116,.10)); border-color: rgba(120,240,170,.35); }
+.tcard.loss { background: linear-gradient(160deg, rgba(239,75,75,.30), rgba(239,75,75,.10)); border-color: rgba(255,140,140,.32); }
+.tcard .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tcard .no { white-space: nowrap; font-size: 13px; opacity: .85; font-weight: 400; letter-spacing: -.01em; }
+.tcard .ws { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }
+.tcard .top .warn { flex-shrink: 0; }
+.tcard .ws i { width: 6px; height: 6px; border-radius: 50%; display: block; font-style: normal; font-size: 0; font-weight: 700; color: #06120b; }
+.tcard .val { display: block; margin-top: 4px; white-space: nowrap; }
+.tcard .meta { display: block; margin-top: 2px; font-size: 10.5px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcard .val { font-size: 24px; font-weight: 300; line-height: .9; letter-spacing: -.02em; }
+.tcard .val small { font-size: 11px; opacity: .7; margin-right: 4px; }
+.tcard .warn { width: 12px; height: 12px; }
+
+/* histórico */
+.hist { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); gap: 16px; }
+.hist .card { padding: 18px; min-width: 0; }
+.hist h3 { margin: 0 0 4px; font-size: 16px; font-weight: 500; }
+.hist p.sub { margin: 0 0 14px; font-size: 12px; color: var(--dim); }
+.chart svg { width: 100%; height: auto; display: block; }
+.day { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 0; border-top: 1px solid var(--stroke); }
+.day:first-of-type { border-top: 0; }
+.day .d { font-weight: 600; }
+.day .meta { font-size: 12px; color: var(--dim); }
+.day .chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; }
+.day .chips span { display: inline-flex; align-items: center; gap: 5px; }
+.day .chips i { width: 8px; height: 8px; border-radius: 50%; }
+.legend-w { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--dim); margin-top: 10px; }
+.legend-w i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+
+[hidden] { display: none !important; }
+.demo { position: fixed; z-index: 20; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); font-size: 11px; color: var(--amber); background: rgba(0,0,0,.55); border: 1px solid rgba(243,164,60,.4); border-radius: 10px; padding: 6px 10px; }
+
+/* tablet */
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 260px minmax(0,1fr); }
+  .rail { display: none; }
+  .filters { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .hist { grid-template-columns: 1fr; }
+}
+/* celular: uma coluna, linha do tempo vertical */
+@media (max-width: 720px) {
+  .app { grid-template-columns: minmax(0,1fr); gap: 12px; padding-block: 12px; }
+  .side { padding: 16px; }
+  .side .foot { display: none; }
+  .filters { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+  .stage { min-height: 0; padding: 14px; }
+  .ruler { display: none; }
+  .board { height: auto !important; padding-left: 22px; }
+  .board > svg { display: none; }
+  .board::before { content: ""; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 1px; background: var(--stroke-hi); }
+  .tcard { position: relative; left: auto !important; top: auto !important; width: 100%; margin-bottom: 12px; }
+  .tcard::before { content: ""; position: absolute; left: -20px; top: 22px; width: 9px; height: 9px; border-radius: 50%; background: var(--pin, var(--dim)); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tcard { transition: transform .25s ease; }
+  .tcard:hover { transform: translateY(-2px); }
+}
+</style>
+
+<div class="app" id="app">
+  <nav class="rail glass" aria-label="Seções">
+    <svg class="mark" viewBox="0 0 30 30" aria-hidden="true"><path d="M5 25V5l10 13V5" fill="none" stroke="#3fd174" stroke-width="3" stroke-linecap="round"/><path d="M19 5v20" stroke="#cfe9d8" stroke-width="3" stroke-linecap="round"/><path d="M25 9v12" stroke="#cfe9d8" stroke-width="3" stroke-linecap="round" opacity=".5"/></svg>
+    <button class="on" data-view="hoje" title="Hoje" aria-label="Hoje"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v4a3 3 0 0 0 3 3h6.5"/></svg></button>
+    <button data-view="historico" title="Histórico" aria-label="Histórico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/></svg></button>
+    <div class="spacer"></div>
+    <button title="O app nunca clica nem opera" aria-label="Aviso"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg></button>
+  </nav>
+
+  <aside class="side glass">
+    <div class="brand"><svg viewBox="0 0 18 22" aria-hidden="true"><path d="M3 19V3l7 10" fill="none" stroke="#3fd174" stroke-width="2.6" stroke-linecap="round"/><path d="M13 3v16" stroke="#e9f2ec" stroke-width="2.6" stroke-linecap="round"/></svg>CandleSense</div>
+    <div class="stats">
+      <div class="stat g"><b id="sWins">0</b><span>ganhou</span></div>
+      <div class="stat r"><b id="sLoss">0</b><span>perdeu</span></div>
+      <div class="stat pct"><b id="sAcc">—</b><span>de acerto hoje</span></div>
+    </div>
+    <div class="seg" role="tablist">
+      <button class="on" data-view="hoje" role="tab">Hoje</button>
+      <button data-view="historico" role="tab">Histórico</button>
+    </div>
+    <ul class="tree">
+      <li class="root"><span class="lbl">Total do dia</span><span class="val" id="tTotal">R$ 0,00</span></li>
+      <li><div class="kids" id="wallets"></div></li>
+    </ul>
+    <div class="foot">Dinheiro de mentira: R$ 10 por entrada, cada carteira começou com R$ 10.000. O app lê a tela e a Twelve Data; nunca clica nem opera na IQ Option.<span id="phone"></span></div>
+  </aside>
+
+  <main class="main">
+    <section class="filters">
+      <div class="filter glass"><small>Par</small><div id="fAsset">—</div></div>
+      <div class="filter glass"><small>Modelo agora</small><div id="fModel">—</div></div>
+      <div class="filter glass"><small>Painel</small><div id="fDecision">—</div></div>
+      <div class="filter glass"><small>Sua conta na IQ</small><div id="fAccount">—</div></div>
+    </section>
+
+    <section class="stage glass" id="viewHoje">
+      <div class="stage-head">
+        <h2>Linha do tempo</h2>
+        <div class="legend"><span><i style="background:var(--green)"></i>ganhou</span><span><i style="background:var(--red)"></i>perdeu</span><span><i style="background:#cfd8d3"></i>aberta</span></div>
+      </div>
+      <div class="ruler glass"><span class="back" aria-hidden="true">‹</span><div class="ticks" id="ticks"></div></div>
+      <div class="board" id="board"></div>
+    </section>
+
+    <section class="hist" id="viewHist" hidden>
+      <div class="card glass chart">
+        <h3>Saldo das carteiras</h3>
+        <p class="sub" id="histSub">fim de cada dia</p>
+        <div id="chart"></div>
+        <div class="legend-w" id="chartLegend"></div>
+      </div>
+      <div class="card glass">
+        <h3>Dia a dia</h3>
+        <p class="sub">total e resultado de cada carteira</p>
+        <div id="days"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="demo" id="demo" hidden>Exemplo: abra pelo CandleSense no Mac para ver os dados de verdade</div>
+
+<script>
+(() => {
+  const COLORS = { A: "#3fd174", B: "#58a0ff", C: "#f3a43c", D: "#b07aff", E: "#ff70a6" };
+  const brl = (v, sign = true) => {
+    const s = Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (sign ? (v > 0 ? "+" : v < 0 ? "−" : "") : "") + "R$ " + s;
+  };
+  const hhmm = ts => new Date(ts * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const pc = p => Math.round(p * 100) + "%";
+  const cls = v => v > 0 ? "pos" : v < 0 ? "neg" : "";
+  const $ = id => document.getElementById(id);
+  let view = "hoje";
+  try { view = localStorage.getItem("cs-view") || "hoje"; } catch (e) {}
+
+  // ---------- dados de exemplo (quando a página não está sendo servida pelo app) ----------
+  function demo() {
+    const now = Math.floor(Date.now() / 1000);
+    let seed = 7; const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+    const specs = [["A","Segura",.62,"62% · vence em 5 min",""],["B","Moderada",.58,"58% · vence em 5 min",""],
+      ["C","Vela de 5 min",.55,"55% · fim da vela de 5 min","RISCO"],["D","Vela de 1 min",.55,"55% · fim da vela de 1 min","RISCO"],
+      ["E","Rápida 30 s",.55,"55% · sai em 30 s","RISCO"]];
+    const entries = [];
+    for (let i = 26; i >= 0; i--) {
+      const ts = now - i * 160 - 20, ch = .55 + rnd() * .1, side = rnd() > .5 ? "COMPRA" : "VENDA";
+      const ws = specs.filter(s => ch >= s[2]).map(s => s[0]);
+      const open = i < 2, won = rnd() < .58;
+      entries.push({ ts, side, chance: ch, wallets: ws, status: open ? "aberta" : won ? "ganhou" : "perdeu",
+        profit: open ? null : (won ? 8.9 : -10) * ws.length, expiry_ts: ts + 300 });
+    }
+    const wallets = specs.map(([key, name, cut, desc, tag]) => {
+      const mine = entries.filter(e => e.wallets.includes(key));
+      const done = mine.filter(e => e.status !== "aberta");
+      const wins = done.filter(e => e.status === "ganhou").length, losses = done.length - wins;
+      const profit = wins * 8.9 - losses * 10;
+      return { key, name, cut, desc, tag, balance: 10000 + profit + (rnd() - .4) * 120,
+        today: { n: mine.length, wins, losses, profit }, open: mine.filter(e => e.status === "aberta").length };
+    });
+    const days = [];
+    for (let d = 4; d >= 1; d--) {
+      const dt = new Date((now - d * 86400) * 1000);
+      const w = {}; specs.forEach(s => { const n = 4 + Math.floor(rnd() * 12), wins = Math.round(n * (.45 + rnd() * .2)); w[s[0]] = { n, wins, losses: n - wins, profit: wins * 8.9 - (n - wins) * 10 }; });
+      days.push({ day: dt.toISOString().slice(0, 10), label: dt.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }), w });
+    }
+    const tw = {}; wallets.forEach(x => tw[x.key] = x.today);
+    days.push({ day: "hoje", label: "hoje", w: tw });
+    return { demo: true, now, asset: "GBP/USD", stake: 10, start_balance: 10000,
+      model: { p_up: .44, ts: now - 25, ready: true },
+      decision: { action: "AGUARDE", text: "Aguarde" },
+      account: { type: "treino", balance: 10000, day: 0 }, wallets, entries, days };
+  }
+
+  // ---------- desenho ----------
+  function renderSide(s) {
+    const all = s.entries.filter(e => e.status === "ganhou" || e.status === "perdeu");
+    const wins = s.wallets.reduce((a, w) => a + w.today.wins, 0), losses = s.wallets.reduce((a, w) => a + w.today.losses, 0);
+    $("sWins").textContent = wins; $("sLoss").textContent = losses;
+    $("sAcc").textContent = wins + losses ? Math.round(100 * wins / (wins + losses)) + "%" : "—";
+    const tot = s.wallets.reduce((a, w) => a + w.today.profit, 0);
+    const t = $("tTotal"); t.textContent = brl(tot); t.className = "val " + cls(tot);
+    $("wallets").innerHTML = s.wallets.map(w => `
+      <div class="leaf${w.open ? " live" : ""}">
+        <span class="nm"><i style="background:${COLORS[w.key]}"></i>${w.key} · ${w.name}${w.tag ? ` <span class="tag">${w.tag}</span>` : ""}</span>
+        <span class="cnt">${w.today.n}</span>
+        <span class="sub"><span>${brl(w.balance, false)}</span><span class="${cls(w.today.profit)}">${w.open ? "aberta agora" : brl(w.today.profit)}</span></span>
+      </div>`).join("");
+  }
+
+  function renderFilters(s) {
+    $("fAsset").textContent = s.asset || "esperando a IQ";
+    const m = s.model || {};
+    if (m.ready && m.p_up != null) {
+      const buy = m.p_up >= .5, ch = Math.max(m.p_up, 1 - m.p_up);
+      $("fModel").innerHTML = `<span class="big ${buy ? "pos" : "neg"}">${buy ? "▲ compra" : "▼ venda"}</span> ${pc(ch)} <span style="color:var(--dim);font-size:12px">${hhmm(m.ts)}</span>`;
+    } else {
+      $("fModel").textContent = m.note || "juntando histórico";
+    }
+    const d = s.decision || {};
+    $("fDecision").innerHTML = `<span class="big ${d.action === "COMPRA" ? "pos" : d.action === "VENDA" ? "neg" : ""}">${d.text || "—"}</span>`;
+    const a = s.account || {};
+    $("fAccount").innerHTML = a.balance != null
+      ? `${(a.type || "").toUpperCase()} <span class="big">$${a.balance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span> <span class="${cls(a.day || 0)}" style="font-size:12px">${a.day ? (a.day > 0 ? "GREEN " : "LOSS ") + brl(a.day).replace("R$ ", "$") : "hoje $0"}</span>`
+      : "lendo o saldo...";
+  }
+
+  function renderTimeline(s) {
+    const board = $("board"), ticks = $("ticks");
+    const groups = s.entries.slice(-8);
+    const now = s.now;
+    const tEnd = now + 120;
+    let tStart = groups.length ? Math.min(groups[0].ts - 120, tEnd - 1200) : tEnd - 1800;
+    tStart = Math.max(tStart, tEnd - 3 * 3600);
+    const span = tEnd - tStart;
+    const W = ticks.clientWidth || 600;
+    const X = t => (t - tStart) / span;
+    // régua
+    const minor = span <= 2400 ? 60 : span <= 7200 ? 300 : 600, label = span <= 2400 ? 300 : span <= 7200 ? 900 : 1800;
+    let html = `<div class="nowband" style="left:${X(now) * 100}%"></div>`;
+    for (let t = Math.ceil(tStart / minor) * minor; t < tEnd; t += minor) {
+      const big = t % label === 0, x = X(t) * 100;
+      html += `<div class="tick${big ? " big" : ""}" style="left:${x}%"></div>`;
+      if (big && Math.abs(X(t) - X(now)) * W > 46) html += `<div class="tlabel" style="left:${x}%">${hhmm(t)}</div>`;
+    }
+    html += `<div class="tlabel now" style="left:${X(now) * 100}%">agora</div>`;
+    for (const e of s.entries) if (e.ts >= tStart) {
+      const c = e.status === "ganhou" ? "var(--green)" : e.status === "perdeu" ? "var(--red)" : "#cfd8d3";
+      html += `<div class="dot" style="left:${X(e.ts) * 100}%;background:${c}"></div>`;
+    }
+    ticks.innerHTML = html;
+    // cartões pendurados (3 alturas, sem encavalar)
+    const bw = board.clientWidth || 800, cw = 150, lanes = [16, 116, 216];
+    const ends = [-1e9, -1e9, -1e9];
+    const off = board.getBoundingClientRect().left, tl = ticks.getBoundingClientRect().left - off;
+    const placed = [];
+    groups.forEach((g, i) => {
+      const x = tl + X(g.ts) * W;
+      const want = Math.min(Math.max(x - cw / 2, 0), bw - cw);
+      const order = [0, 1, 2].map(j => (i + j) % 3);
+      const fit = order.filter(l => ends[l] + 12 <= want);
+      const lane = fit.length ? fit[0] : order.reduce((a, b) => ends[a] <= ends[b] ? a : b);
+      const left = Math.max(want, ends[lane] + 12);
+      if (left > bw - cw + 1 && bw > 720) return;
+      ends[lane] = left + cw;
+      placed.push({ g, left, top: lanes[lane], x });
+    });
+    let svg = `<svg aria-hidden="true">`;
+    for (const p of placed) {
+      const c = p.g.status === "ganhou" ? "#3fd174" : p.g.status === "perdeu" ? "#ef4b4b" : "#9aa69f";
+      svg += `<line x1="${p.x}" y1="-6" x2="${p.left + cw / 2}" y2="${p.top}" stroke="${c}" stroke-opacity=".75" stroke-width="1"/>`;
+      svg += `<circle cx="${p.left + cw / 2}" cy="${p.top}" r="3" fill="${c}"/>`;
+    }
+    svg += `</svg>`;
+    const cards = placed.slice().reverse().map(p => {
+      const g = p.g, won = g.status === "ganhou", lost = g.status === "perdeu";
+      const open = g.status === "aberta";
+      const left = Math.max(0, g.expiry_ts - now);
+      const val = open ? `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`
+        : g.profit == null ? "—" : `${g.profit > 0 ? "+" : g.profit < 0 ? "−" : ""}${Math.abs(g.profit).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+      const ws = g.wallets.map(k => `<i style="background:${COLORS[k]}">${k}</i>`).join("");
+      const warn = (lost ? `<svg class="warn" viewBox="0 0 24 24"><path d="M12 3 2 21h20z" fill="#ff6b6b"/><path d="M12 9v6M12 18v.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>` : "") + `<span class="ws">${ws}</span>`;
+      const pin = won ? "#3fd174" : lost ? "#ef4b4b" : "#cfd8d3";
+      return `<article class="tcard${won ? " win" : lost ? " loss" : ""}" style="left:${p.left}px;top:${p.top}px;--pin:${pin}">
+        <div class="top"><span class="no">${g.side === "COMPRA" ? "▲" : "▼"} ${hhmm(g.ts)}</span>${warn}</div>
+        <span class="val">${open ? "" : "<small>R$</small>"}${val}</span>
+        <span class="meta">${open ? "aberta" : won ? "ganhou" : lost ? "perdeu" : g.status} · chance ${pc(g.chance)}</span></article>`;
+    }).join("");
+    board.innerHTML = svg + (cards || `<p style="position:relative;color:var(--dim);padding:40px 4px">Nenhuma entrada ainda hoje. Quando a chance passar do corte, a entrada aparece aqui pendurada no horário dela.</p>`);
+  }
+
+  function renderHist(s) {
+    if (!s.wallets.length) return;
+    const days = s.days, keys = s.wallets.map(w => w.key), start = s.start_balance || 10000;
+    const series = {}; keys.forEach(k => { let v = start; series[k] = [start].concat(days.map(d => (v += (d.w[k] || {}).profit || 0))); });
+    const all = Object.values(series).flat();
+    let lo = Math.min(...all), hi = Math.max(...all); const pad = Math.max(20, (hi - lo) * .15); lo -= pad; hi += pad;
+    const Wd = 640, H = 300, L = 8, R = 8, T = 10, B = 26, n = days.length + 1;
+    const xs = i => L + (Wd - L - R) * (n > 1 ? i / (n - 1) : 1), ys = v => T + (hi - v) / (hi - lo) * (H - T - B);
+    let svg = `<svg viewBox="0 0 ${Wd} ${H}" role="img" aria-label="Saldo de cada carteira no fim de cada dia">`;
+    [lo + (hi - lo) * .25, start, lo + (hi - lo) * .75].forEach(v => svg += `<line x1="${L}" x2="${Wd - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="rgba(255,255,255,${v === start ? .18 : .06})" stroke-dasharray="${v === start ? "4 4" : ""}"/>`);
+    svg += `<text x="${Wd - R}" y="${ys(start) - 6}" text-anchor="end" fill="#9aa69f" font-size="11">início ${brl(start, false)}</text>`;
+    keys.forEach(k => {
+      const pts = series[k].map((v, i) => `${xs(i)},${ys(v)}`).join(" ");
+      svg += `<polyline points="${pts}" fill="none" stroke="${COLORS[k]}" stroke-width="2" stroke-linejoin="round"/>`;
+      const v = series[k][n - 1]; svg += `<circle cx="${xs(n - 1)}" cy="${ys(v)}" r="3.5" fill="${COLORS[k]}"/>`;
+    });
+    svg += `<text x="${L}" y="${H - 6}" fill="#5d6a63" font-size="11">começo</text><text x="${Wd - R}" y="${H - 6}" text-anchor="end" fill="#5d6a63" font-size="11">hoje</text></svg>`;
+    $("chart").innerHTML = svg;
+    $("chartLegend").innerHTML = s.wallets.map(w => `<span><i style="background:${COLORS[w.key]}"></i>${w.key} ${brl(w.balance, false)}</span>`).join("");
+    $("days").innerHTML = days.slice().reverse().map(d => {
+      const vals = Object.values(d.w); const tot = vals.reduce((a, x) => a + (x.profit || 0), 0);
+      const nn = vals.reduce((a, x) => a + (x.n || 0), 0), wi = vals.reduce((a, x) => a + (x.wins || 0), 0), lo2 = vals.reduce((a, x) => a + (x.losses || 0), 0);
+      return `<div class="day"><div><div class="d">${d.label}</div><div class="meta">${nn} entradas${wi + lo2 ? " · " + Math.round(100 * wi / (wi + lo2)) + "% de acerto" : ""}</div></div>
+        <div class="${cls(tot)}" style="font-size:18px;font-weight:600">${brl(tot)}</div>
+        <div class="chips">${keys.map(k => d.w[k] ? `<span><i style="background:${COLORS[k]}"></i><span class="${cls(d.w[k].profit)}">${brl(d.w[k].profit).replace("R$ ", "")}</span></span>` : "").join("")}</div></div>`;
+    }).join("") || `<p class="sub">Os dias aparecem aqui conforme o app joga.</p>`;
+  }
+
+  let state = null;
+  function render() {
+    if (!state) return;
+    $("viewHoje").hidden = view !== "hoje"; $("viewHist").hidden = view !== "historico";
+    document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
+    renderSide(state); renderFilters(state);
+    if (view === "hoje") renderTimeline(state); else renderHist(state);
+  }
+  document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => {
+    view = b.dataset.view; try { localStorage.setItem("cs-view", view); } catch (e) {} render();
+  }));
+  window.addEventListener("resize", render);
+
+  let live = false;
+  async function tick() {
+    const msg = $("demo");
+    try {
+      const r = await fetch("api/state", { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      const j = await r.json();
+      if (j.waiting) {
+        state = { now: Date.now() / 1000, asset: null, model: { note: "esperando a primeira leitura" }, decision: {},
+          account: {}, wallets: [], entries: [], days: [] };
+        msg.textContent = "Esperando o CandleSense achar a IQ Option no Mac..."; msg.hidden = false;
+      } else {
+        state = j;
+        if (j.stale) { msg.textContent = `O Mac parou de ler há ${j.stale} s (dormiu, bloqueou ou a IQ fechou). Mostrando a última leitura.`; msg.hidden = false; }
+        else msg.hidden = true;
+      }
+      live = true;
+    } catch (e) {
+      if (live) { msg.textContent = "Sem conexão com o Mac. Mostrando a última leitura."; msg.hidden = false; }
+      else { state = demo(); msg.textContent = "Exemplo: abra pelo CandleSense no Mac para ver os dados de verdade"; msg.hidden = false; }
+    }
+    $("phone").textContent = state.url ? ` No celular, no mesmo Wi-Fi: ${state.url}` : "";
+    render();
+  }
+  tick(); setInterval(tick, 1000);
+})();
+</script>

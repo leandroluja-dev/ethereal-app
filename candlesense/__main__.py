@@ -497,6 +497,46 @@ def _ask_feed_key(dados) -> None:
         print(f"twelvedata indisponível: {e!r}", flush=True)
 
 
+def _start_web(args):
+    """Página do app no navegador (tela cheia) e no celular, servida pelo Mac. Nunca derruba a leitura."""
+    if getattr(args, "sem_pagina", False):
+        return None
+    try:
+        from .web.server import WebServer
+
+        web = WebServer()
+        local, phone = web.urls()
+        web.phone = phone
+        print(f"página: {local}" + (f" · no celular (mesmo Wi-Fi): {phone}" if phone else ""), flush=True)
+        import webbrowser
+
+        webbrowser.open(local)
+        return web
+    except Exception as e:
+        print(f"página indisponível: {e!r}", flush=True)
+        return None
+
+
+def _publish_web(web, st, extras, dec) -> None:
+    from .web.server import build_state
+
+    try:
+        t = extras.open_trade
+        if extras.exit_alert:
+            text, action = "SAIR AGORA", "SAIR"
+        elif dec.signal and not t:
+            text, action = ("COMPRE AGORA" if dec.action == "COMPRA" else "VENDA AGORA"), dec.action
+        elif t:
+            text, action = "Segure", ""
+        elif dec.action == "LEITURA INCERTA":
+            text, action = "Leitura incerta", ""
+        else:
+            text, action = "Aguarde", ""
+        web.publish(build_state(st, extras, text, action, url=getattr(web, "phone", None)))
+    except Exception as e:  # a página nunca derruba a leitura
+        print(f"página: {e!r}", flush=True)
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import close_other_instances, hide_python_dock_icon
@@ -508,6 +548,7 @@ def cmd_live(args) -> int:
     if not _check_platform():
         return 2
     _keep_awake()
+    web = _start_web(args) if APP_MODE else None
     if APP_MODE and not args.sem_rede:
         _ask_feed_key(args.dados)
     from .platform.capture import open_window_source, timed_grab
@@ -703,6 +744,8 @@ def cmd_live(args) -> int:
                     extras.model_time = time.strftime("%H:%M", time.localtime(stt.last_ts)) if fresh else None
                 except Exception as e:  # as telas das entradas nunca derrubam a leitura
                     print(f"telas das entradas: {e!r}", flush=True)
+                if web is not None and sides.state is not None:
+                    _publish_web(web, sides.state, extras, dec)
             if wallet_dirty or time.monotonic() - last_wallet > 1:
                 _wallet_extras(extras, wallet, store, r.account, wallet_view)
                 wallet_dirty = False
@@ -834,6 +877,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="seu tempo de reação em segundos (padrão 3): o aviso vem com essa folga")
     ap.add_argument("--sem-som", action="store_true", help="sem avisos sonoros")
     ap.add_argument("--sem-rede", action="store_true", help="não busca velas na Twelve Data")
+    ap.add_argument("--sem-pagina", action="store_true", help="não abre a página no navegador")
     ap.add_argument("--dados", default="dados", help="pasta do histórico (padrão ./dados)")
     ap.add_argument("--margem", type=float, default=2.0,
                     help="pontos percentuais acima do equilíbrio do payout para sinalizar (padrão 2)")

@@ -35,7 +35,8 @@ candlesense = "candlesense.__main__:main"
 include = ["candlesense*"]
 
 [tool.setuptools.package-data]
-"candlesense.ui" = ["fonts/*.otf", "fonts/OFL.txt"]
+"candlesense.ui" = ["fonts/*.otf", "fonts/*.ttf", "fonts/OFL*.txt"]
+"candlesense.web" = ["index.html"]
 "candlesense.engine" = ["*.json.gz"]
 
 [tool.pytest.ini_options]
