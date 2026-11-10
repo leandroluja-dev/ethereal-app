@@ -244,13 +244,50 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
         wallet_view.show(render_wallet(days, board, store.signals(since=since), wallet_view.scale))
 
 
-def _show_panel(panel, dec, r, extras, wallet_view) -> None:
-    """Uma janela só: a carteira aparece dentro do próprio painel."""
+def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
+    """Entradas do simulador para as telas 2 e 3, com som quando uma entrada é conferida."""
+    from .alerts import play
+    from .history.wallet import day_start
+    from .ui.sim_view import SimState
+
+    now = time.time()
+    entries = strong.entries(day_start(now), now=now)
+    first = sim.state is None
+    seen = sim.__dict__.setdefault("_status", {})
+    seen_at = sim.__dict__.setdefault("_seen_at", {})
+    for e in entries:
+        k = (e["asset"], e["start"])
+        before = seen.get(k)
+        if before != e["status"]:
+            if before is None and e["status"] == "aberta" and not first:
+                print(f"simulador: entrou {e['side']} {e['asset']} R$ {e['stake']:.2f} "
+                      f"(chance {e['chance']:.0%}, ganha R$ {e['gain']:.2f})", flush=True)
+            if before == "aberta" and e["status"] in ("ganhou", "perdeu", "empate"):
+                seen_at[k] = now
+                print(f"simulador: {e['status']} {e['asset']} {e['profit']:+.2f}", flush=True)
+                if play_sound and e["status"] != "empate":
+                    play(e["status"])
+            seen[k] = e["status"]
+        if k in seen_at:
+            e["seen_at"] = seen_at[k]
+    note = None
+    if asset and "OTC" in asset.upper():
+        note = "Em OTC o app não entra: o modelo só foi testado no mercado normal."
+    elif r.ok and r.timeframe_s and r.timeframe_s != 60:
+        note = "O app só entra no gráfico de 1 min. Mude a vela para 1 min para ele medir."
+    hist = strong.history_minutes(asset, now) if asset and asset != "?" else None
+    sim.state = SimState(entries=entries, now=now, asset=asset if asset != "?" else None,
+                         price=r.current_price if r.ok else None,
+                         decimals=r.scale.decimals if r.scale else 5, hist_min=hist, note=note)
+
+
+def _show_panel(panel, dec, r, extras, wallet_view, sides=None) -> None:
+    """Uma janela só: a carteira aparece dentro do próprio painel; as entradas do app ao lado."""
     overlay = wallet_view.image if wallet_view is not None and wallet_view.visible else None
-    panel.show(dec, r, extras, overlay=overlay)
+    panel.show(dec, r, extras, overlay=overlay, sides=sides)
 
 
-def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1):
+def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1, sides=None):
     """Atende teclas e cliques do painel. Devolve "sair", "redesenhar" ou None."""
     key = (cv2.waitKey(wait_ms) & 0xFF) if poll else 255
     if key in (27, ord("q")):
@@ -262,6 +299,9 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
         act = "redesenhar"
     if key == ord("g"):
         extras.chart = not extras.chart
+        act = "redesenhar"
+    if key == ord("e") and sides is not None:
+        sides.visible = not sides.visible
         act = "redesenhar"
     if getattr(panel, "pop_hover_change", lambda: False)():
         act = "redesenhar"  # mouse sobre o botão: muda a cor na hora
@@ -376,6 +416,8 @@ def cmd_live(args) -> int:
         print(f"modo medição indisponível: {e!r}", flush=True)
     extras = PanelExtras()
     wallet_view = None
+    sides = None
+    last_sim_view = 0.0
     wallet_dirty = True
     last_wallet = 0.0
     alerted: set[int] = set()
@@ -389,6 +431,13 @@ def cmd_live(args) -> int:
         from .ui.wallet_view import WalletWindow
 
         wallet_view = WalletWindow(scale=args.painel_escala)
+        from .ui.sim_view import SideScreens
+
+        sides = SideScreens(scale=args.painel_escala)
+        if strong is None:
+            from .ui.sim_view import SimState
+
+            sides.state = SimState(available=False)
         if APP_MODE:
             from .platform.appmode import hide_python_dock_icon
 
@@ -482,6 +531,12 @@ def cmd_live(args) -> int:
                     alerted.update(new)
                     if not args.sem_som:
                         play("sair", voice="atenção, considere sair")
+            if sides is not None and strong is not None and time.monotonic() - last_sim_view >= 1:
+                last_sim_view = time.monotonic()
+                try:
+                    _sim_state(strong, sides, r, asset, play_sound=not args.sem_som)
+                except Exception as e:  # as telas das entradas nunca derrubam a leitura
+                    print(f"telas das entradas: {e!r}", flush=True)
             if wallet_dirty or time.monotonic() - last_wallet > 1:
                 _wallet_extras(extras, wallet, store, r.account, wallet_view)
                 wallet_dirty = False
@@ -498,15 +553,15 @@ def cmd_live(args) -> int:
             if APP_MODE:
                 _diagnostic(img, r, dec)
             if panel is not None:
-                _show_panel(panel, dec, r, extras, wallet_view)
-                act = _panel_input(panel, wallet_view, extras, poll=not (args.debug or save_dir))
+                _show_panel(panel, dec, r, extras, wallet_view, sides)
+                act = _panel_input(panel, wallet_view, extras, poll=not (args.debug or save_dir), sides=sides)
                 if act == "sair":
                     break
                 if act == "redesenhar":
                     wallet_dirty = False
                     last_wallet = time.monotonic()
                     _wallet_extras(extras, wallet, store, r.account, wallet_view)
-                    _show_panel(panel, dec, r, extras, wallet_view)
+                    _show_panel(panel, dec, r, extras, wallet_view, sides)
             if args.debug or save_dir:
                 ov = draw(img, r)
                 if args.debug:
@@ -534,13 +589,13 @@ def cmd_live(args) -> int:
                 if panel is None or args.debug or save_dir:
                     time.sleep(max(0.0, period - (time.perf_counter() - t0)))
                     break
-                act = _panel_input(panel, wallet_view, extras, poll=True, wait_ms=15)
+                act = _panel_input(panel, wallet_view, extras, poll=True, wait_ms=15, sides=sides)
                 if act == "sair":
                     stop = True
                     break
                 if act == "redesenhar":
                     _wallet_extras(extras, wallet, store, r.account, wallet_view)
-                    _show_panel(panel, dec, r, extras, wallet_view)
+                    _show_panel(panel, dec, r, extras, wallet_view, sides)
             if stop:
                 break
     except KeyboardInterrupt:

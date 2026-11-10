@@ -172,3 +172,56 @@ class StrongMode:
         return (f"Simulador (só medição, R$ {stake:.0f} por entrada, corte {threshold:.0%}): "
                 f"{s['entradas']} entradas, {s['ganhos']} ganhos, {s['perdas']} perdas, {s['empates']} empates, "
                 f"acerto {acc}, resultado R$ {s['lucro']:+.2f}. Por par: {pares}.")
+
+    # ------------------------------------------------------------ telas do simulador
+
+    def entries(self, since: float = 0.0, threshold: float = 0.62, stake: float = 10.0,
+                min_payout: int = 80, now: Optional[float] = None) -> list[dict]:
+        """Entradas virtuais do simulador, uma por medição acima do corte (mais antiga primeiro).
+
+        Mesmas regras de ``simulate``. Cada entrada traz: asset, start, ts, side
+        (COMPRA/VENDA), chance, price (preço de entrada), payout, stake, gain (quanto
+        ganha se acertar), expiry_ts, status (aberta, ganhou, perdeu, empate ou
+        sem leitura) e profit (None enquanto aberta).
+        """
+        now = time.time() if now is None else now
+        rows = self.db.execute(
+            "SELECT asset, start, ts, p_up, price, payout, out5 FROM forte WHERE ts>=? ORDER BY ts",
+            (since,)).fetchall()
+        out = []
+        for asset, start, ts, p, price, payout, res in rows:
+            if not (p >= threshold or p <= 1 - threshold):
+                continue
+            pay = payout if payout else 86
+            if pay < min_payout:
+                continue
+            side = "COMPRA" if p >= 0.5 else "VENDA"
+            gain = stake * pay / 100.0
+            expiry = start + 360  # fecha a vela start+300: 5 min depois da entrada
+            if res is None:
+                status = "aberta" if now < expiry + 120 else "sem leitura"
+                profit = None
+            elif res == -1:
+                status, profit = "empate", 0.0
+            elif (side == "COMPRA") == (res == 1):
+                status, profit = "ganhou", gain
+            else:
+                status, profit = "perdeu", -stake
+            out.append({"asset": asset, "start": start, "ts": ts, "side": side, "chance": max(p, 1 - p),
+                        "price": price, "payout": pay, "stake": stake, "gain": gain, "expiry_ts": expiry,
+                        "status": status, "profit": profit})
+        return out
+
+    def history_minutes(self, asset: str, now: Optional[float] = None) -> int:
+        """Quantos minutos seguidos de gráfico de 1 min o app já tem deste par (precisa de MIN_HISTORY)."""
+        now = time.time() if now is None else now
+        rows = self.db.execute("SELECT start FROM fita WHERE asset=? AND start<=? ORDER BY start DESC LIMIT ?",
+                               (asset, int(now), MIN_HISTORY + 5)).fetchall()
+        if not rows or now - rows[0][0] > 180:
+            return 0
+        n, prev = 0, None
+        for (s,) in rows:
+            if prev is not None and prev - s != 60:
+                break
+            n, prev = n + 1, s
+        return n

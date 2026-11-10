@@ -690,7 +690,7 @@ def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading], ex: Option
     st += " · " + ("probabilidade corrigida pelo placar" if d.calibrated else "probabilidade por regras")
     c.para(st, 11, FAINT, gap=4)
     c.para("Só lê a tela: nunca clica e nunca opera.", 11, FAINT, gap=4)
-    c.para("Teclas: c carteira · d detalhes · g gráfico · q fechar", 11, FAINT, gap=4)
+    c.para("Teclas: c carteira · d detalhes · g gráfico · e entradas · q fechar", 11, FAINT, gap=4)
 
 
 def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0,
@@ -751,8 +751,12 @@ class PanelWindow:
             pass
 
     def show(self, decision: Decision, reading: Optional[ChartReading] = None,
-             extras: Optional[PanelExtras] = None, overlay: Optional[np.ndarray] = None) -> None:
-        """Mostra o painel; ``overlay`` (a carteira) troca o conteúdo na mesma janela."""
+             extras: Optional[PanelExtras] = None, overlay: Optional[np.ndarray] = None,
+             sides=None) -> None:
+        """Mostra o painel; ``overlay`` (a carteira) troca o conteúdo na mesma janela.
+
+        ``sides`` (SideScreens) põe as telas das entradas do app à direita, na mesma altura.
+        """
         if overlay is not None:
             img = overlay
         else:
@@ -770,6 +774,13 @@ class PanelWindow:
                 if extras is not None:
                     extras.stale = True
             img = render(decision, shown, self.scale, extras)
+        if sides is not None:
+            try:
+                side = sides.image(img.shape[0])
+                if side is not None:
+                    img = np.hstack([img, side])
+            except Exception as e:  # as telas novas nunca derrubam o painel
+                print(f"telas das entradas: {e!r}", flush=True)
         self.cv2.imshow(self.NAME, img)
         self._frames += 1
         if self._frames in (1, 3, 10) or self._frames % 50 == 0:
