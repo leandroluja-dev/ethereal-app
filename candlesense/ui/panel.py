@@ -202,6 +202,9 @@ class PanelExtras:
     stale: bool = False                     # leitura incerta agora: gráfico é o da última leitura boa
     tf_best: Optional[int] = None
     exit_alert: Optional[str] = None
+    model_mode: bool = False             # pílulas mostram a conta do modelo (1 por minuto)
+    model_p: Optional[float] = None      # chance de subir da última conta (até 3 min atrás)
+    model_time: Optional[str] = None     # hora dessa conta (HH:MM)
     details: bool = False       # explicação dos módulos (tecla d)
     chart: bool = True          # gráfico ao vivo
     buttons: bool = True        # botão Carteira no topo
@@ -566,18 +569,26 @@ def _action_card(c: _Canvas, d: Decision, ex: PanelExtras) -> None:
     c.y = c.px(y0 + h + GAP)
 
 
-def _side_pills(c: _Canvas, d: Decision) -> None:
-    """Força da compra x da venda em %, como os botões Buy / Sell da referência (só mostram, nunca clicam)."""
+def _side_pills(c: _Canvas, d: Decision, ex: Optional[PanelExtras] = None) -> None:
+    """Compra x venda em %, como os botões Buy / Sell da referência (só mostram, nunca clicam).
+
+    Com o painel do app, mostram a conta do modelo das carteiras, feita uma vez por minuto
+    (fica parada o minuto inteiro). O motor por regras mudava a cada leitura e confundia.
+    """
     y0 = c.u
     h = 46
     gap = 10
     pw = (W - 2 * PAD - gap) / 2
-    known = d.best is not None and d.action != INCERTA
-    p_up = d.best.p_up if known else None
+    model = ex is not None and ex.model_mode
+    if model:
+        p_up = ex.model_p
+    else:
+        known = d.best is not None and d.action != INCERTA
+        p_up = d.best.p_up if known else None
     for i, (name, col) in enumerate((("Compra", GREEN), ("Venda", RED))):
         x = PAD + i * (pw + gap)
         p = None if p_up is None else (p_up if i == 0 else 1 - p_up)
-        lit = d.signal and ((i == 0) == (d.action == COMPRA))
+        lit = (p is not None and p >= 0.62) if model else (d.signal and ((i == 0) == (d.action == COMPRA)))
         if lit:
             fill, fg, pc = col, (BLACK if i == 0 else WHITE), (BLACK if i == 0 else WHITE)
         else:
@@ -588,6 +599,14 @@ def _side_pills(c: _Canvas, d: Decision) -> None:
         sx = x + pw / 2 - (w1 + 8 + w2) / 2
         c.at(sx, y0 + h / 2, t1, 15, fg, "semibold", anchor="lm")
         c.at(sx + w1 + 8, y0 + h / 2, t2, 15, pc, "bold", anchor="lm")
+    if model:
+        if ex.model_p is not None and ex.model_time:
+            cap = f"conta do modelo às {ex.model_time} · 1 por minuto · entra a partir de 62%"
+        else:
+            cap = "modelo: 1 conta por minuto, depois de 2h15 de velas"
+        c.at(W / 2, y0 + h + 12, cap, 11, DIM, anchor="mm")
+        c.y = c.px(y0 + h + 22 + GAP)
+        return
     c.y = c.px(y0 + h + GAP)
 
 
@@ -705,7 +724,7 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
     _wallet_strip(c, ex)              # saldo da carteira no topo
     _open_trade_card(c, ex, reading)  # operação aberta, ao vivo
     _action_card(c, d, ex)            # COMPRE AGORA / VENDA AGORA / SAIR AGORA, ou Aguarde / Segure
-    _side_pills(c, d)                 # força da compra x venda em %
+    _side_pills(c, d, ex)             # compra x venda em % (conta do modelo, 1 por minuto)
 
     cs = []
     if reading is not None and reading.candles:

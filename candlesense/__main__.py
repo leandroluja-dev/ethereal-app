@@ -545,6 +545,11 @@ def cmd_live(args) -> int:
                 last_sim_view = time.monotonic()
                 try:
                     _sim_state(strong, sides, r, asset, play_sound=not args.sem_som)
+                    stt = sides.state
+                    extras.model_mode = True
+                    fresh = stt.last_p is not None and stt.last_ts is not None and stt.now - stt.last_ts < 180
+                    extras.model_p = stt.last_p if fresh else None
+                    extras.model_time = time.strftime("%H:%M", time.localtime(stt.last_ts)) if fresh else None
                 except Exception as e:  # as telas das entradas nunca derrubam a leitura
                     print(f"telas das entradas: {e!r}", flush=True)
             if wallet_dirty or time.monotonic() - last_wallet > 1:
