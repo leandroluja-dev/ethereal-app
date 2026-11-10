@@ -397,6 +397,19 @@ def _keep_awake() -> None:
         print(f"não consegui manter o Mac acordado: {e!r}", flush=True)
 
 
+def _ask_feed_key(dados) -> None:
+    """Pede a chave da Twelve Data logo na abertura (antes de esperar a IQ), em segundo plano."""
+    try:
+        import threading
+
+        from .feeds.twelvedata import ask_key, asked_before, load_key
+
+        if not load_key(dados) and not asked_before(dados):
+            threading.Thread(target=ask_key, args=(dados,), name="chave", daemon=True).start()
+    except Exception as e:
+        print(f"twelvedata indisponível: {e!r}", flush=True)
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import close_other_instances, hide_python_dock_icon
@@ -408,6 +421,8 @@ def cmd_live(args) -> int:
     if not _check_platform():
         return 2
     _keep_awake()
+    if APP_MODE and not args.sem_rede:
+        _ask_feed_key(args.dados)
     from .platform.capture import open_window_source, timed_grab
 
     win = _find_window_or_wait(wait=True)

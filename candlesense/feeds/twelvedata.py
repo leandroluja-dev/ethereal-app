@@ -33,6 +33,7 @@ _lock = threading.Lock()
 _recent: deque = deque()
 _day = {"date": "", "n": 0}
 _key_path: Optional[Path] = None
+_ask_lock = threading.Lock()  # uma janelinha só, mesmo pedida por dois lugares
 
 
 def key_path(dados: str | Path = "dados") -> Path:
@@ -55,6 +56,13 @@ def ask_key(dados: str | Path = "dados") -> Optional[str]:
     """Pede a chave numa janelinha do Mac (uma vez). Grava em dados/twelvedata.key."""
     if sys.platform != "darwin":
         return None
+    with _ask_lock:
+        if asked_before(dados):  # outra parte do app já perguntou enquanto esta esperava
+            return load_key(dados)
+        return _ask_dialog(dados)
+
+
+def _ask_dialog(dados: str | Path) -> Optional[str]:
     script = ('display dialog "Para o CandleSense ter o histórico na hora, cole aqui a API key da '
               'Twelve Data (twelvedata.com, conta grátis).\\n\\nEla fica guardada só neste Mac. '
               'Cancelar = o app junta o histórico pela tela." default answer "" with hidden answer '
@@ -164,7 +172,7 @@ class FitaFiller:
         import sqlite3
 
         if not load_key(self.dados):
-            if asked_before(self.dados) or ask_key(self.dados) is None:
+            if ask_key(self.dados) is None:
                 self.status = "sem chave"
                 return
         db = sqlite3.connect(self.db_path, timeout=10)
