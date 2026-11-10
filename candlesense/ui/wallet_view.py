@@ -17,7 +17,7 @@ import numpy as np
 from ..history.scoreboard import HorizonScore
 from ..history.wallet import AccountDay
 from ..models import fmt_duration
-from .panel import DIM, FG, GREEN, ORANGE, PAD, RED, W, _Canvas, _pct
+from .panel import DIM, FG, GREEN, ORANGE, PAD, RED, W, _Canvas, _pct, draw_button
 
 ACC_NAME = {"real": "Conta REAL", "treino": "Conta de TREINO"}
 ACC_COLOR = {"real": GREEN, "treino": ORANGE}
@@ -41,9 +41,10 @@ def _tf(s: int) -> str:
 def render_wallet(days: dict[str, AccountDay], board: Optional[dict[int, HorizonScore]] = None,
                   signals: Optional[list[dict]] = None, scale: float = 1.0) -> np.ndarray:
     c = _Canvas(scale, height=2400)
-    c.y = c.px(10)
-    c.text(PAD, "Carteira de hoje", 24, FG, bold=True)
-    c.space(32)
+    draw_button(c, "Voltar")
+    c.y = c.px(18)
+    c.text(PAD, "Carteira de hoje", 22, FG, bold=True)
+    c.space(34)
     c.para(time.strftime("%d/%m/%Y") + " · deduzida do saldo da tela (o app não acessa a sua conta)", 11, DIM)
     c.rule()
     if not days:
@@ -120,52 +121,29 @@ def render_wallet(days: dict[str, AccountDay], board: Optional[dict[int, Horizon
 
 
 class WalletWindow:
-    NAME = "CandleSense - Carteira"
+    """A carteira dentro da janela do painel (não abre outra janela).
+
+    Guarda a última imagem desenhada; o painel mostra essa imagem no lugar do
+    sinal enquanto ``visible`` for verdadeiro. O botão Voltar (mesmo lugar do
+    botão Carteira) ou a tecla c voltam para o sinal.
+    """
+
+    NAME = "CandleSense"
 
     def __init__(self, scale: float = 1.0) -> None:
-        import cv2
-
-        self.cv2 = cv2
         self.scale = scale
         self.visible = False
-        self._shown = False
+        self.image: Optional[np.ndarray] = None
 
     def toggle(self) -> None:
-        if self.visible:
-            self.hide()
-        else:
-            self.visible = True
+        self.visible = not self.visible
+        if not self.visible:
+            self.image = None
 
     def show(self, img: np.ndarray) -> None:
-        if not self.visible:
-            return
-        from ..platform.appmode import reopen, was_closed
-
-        if self._shown and was_closed(self.NAME):
-            reopen(self.NAME)
-            self.hide()
-            return
-        if self._shown:
-            try:  # fechada pela bolinha vermelha
-                if self.cv2.getWindowProperty(self.NAME, self.cv2.WND_PROP_VISIBLE) < 1:
-                    self.visible = self._shown = False
-                    return
-            except Exception:
-                pass
-        self.cv2.imshow(self.NAME, img)
-        if not self._shown:
-            from ..platform.appmode import window_buttons
-
-            window_buttons(self.NAME)
-        self._shown = True
-        try:
-            self.cv2.setWindowProperty(self.NAME, self.cv2.WND_PROP_TOPMOST, 1)
-        except Exception:
-            pass
+        if self.visible:
+            self.image = img
 
     def hide(self) -> None:
-        self.visible = self._shown = False
-        try:
-            self.cv2.destroyWindow(self.NAME)
-        except Exception:
-            pass
+        self.visible = False
+        self.image = None
