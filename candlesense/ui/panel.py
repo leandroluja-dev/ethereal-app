@@ -193,6 +193,7 @@ class PanelExtras:
     wallet_n: Optional[int] = None         # entradas hoje
     wallet_wins: Optional[int] = None
     wallet_losses: Optional[int] = None
+    wallet_day: Optional[float] = None     # saldo agora - primeiro saldo de hoje (seus ganhos e perdas)
     open_line: Optional[str] = None
     # operação aberta: amount, direction (COMPRA/VENDA/None), entry_price, payout, seconds_left
     open_trade: Optional[dict] = None
@@ -493,30 +494,42 @@ def _live_result(t: dict, price: Optional[float]) -> tuple[Optional[float], Opti
 
 
 def _wallet_strip(c: _Canvas, ex: PanelExtras) -> None:
-    """Carteira no topo: o saldo da conta (como está na IQ Option), a conta e o resultado de hoje."""
+    """Carteira no topo: o seu dia (GREEN ou LOSS, pelos seus ganhos e perdas), a conta e o saldo."""
     y0 = c.u
-    h = 64
+    h = 78
     c.card(y0, y0 + h)
     inner = PAD + 18
-    cy = y0 + h / 2
-    c.at(inner, cy - 11, "Saldo na carteira", 12, DIM, anchor="lm")
-    if ex.wallet_balance is not None:
-        c.at(inner, cy + 10, _money(ex.wallet_balance).lstrip("+"), 22, FG, "bold", anchor="lm")
-    else:
-        c.at(inner, cy + 10, "lendo o saldo...", 16, DIM, "medium", anchor="lm")
     right = W - PAD - 16
+    cy = y0 + h / 2
+    day = ex.wallet_day if ex.wallet_day is not None else (ex.wallet_profit if ex.wallet_n else None)
+    c.at(inner, cy - 16, "Seu dia hoje", 12, DIM, anchor="lm")
+    if day is None:
+        msg = "lendo o saldo..." if ex.wallet_balance is None else "$0,00"
+        c.at(inner, cy + 10, msg, 22 if ex.wallet_balance is not None else 16, DIM if day is None else FG,
+             "bold", anchor="lm")
+    else:
+        col = GREEN if day > 0.004 else RED if day < -0.004 else FG
+        txt = _money(day) if abs(day) > 0.004 else "$0,00"
+        c.at(inner, cy + 10, txt, 26, col, "bold", anchor="lm")
+        lab = "GREEN" if day > 0.004 else "LOSS" if day < -0.004 else "ZERO"
+        bx = inner + c.tw(txt, 26, "bold") + 10
+        bw = c.tw(lab, 11, "bold") + 16
+        if lab == "ZERO":
+            c.rrect(bx, cy + 1, bx + bw, cy + 19, 9, outline=DIM, width=1.2)
+            c.at(bx + bw / 2, cy + 10, lab, 11, DIM, "bold", anchor="mm")
+        else:
+            c.rrect(bx, cy + 1, bx + bw, cy + 19, 9, fill=col)
+            c.at(bx + bw / 2, cy + 10, lab, 11, BLACK, "bold", anchor="mm")
     if ex.wallet_account in ("real", "treino"):
         lab = "REAL" if ex.wallet_account == "real" else "TREINO"
         bc = GREEN if ex.wallet_account == "real" else ORANGE
         bw = c.tw(lab, 11, "bold") + 16
-        c.rrect(right - bw, cy - 21, right, cy - 3, 9, outline=bc, width=1.2)
-        c.at(right - bw / 2, cy - 12, lab, 11, bc, "bold", anchor="mm")
-    if ex.wallet_n is not None:
-        pr = ex.wallet_profit or 0.0
-        col = GREEN if pr > 0 else RED if pr < 0 else DIM
-        txt = _money(pr) if pr else "$0,00"
-        c.at(right, cy + 11, txt, 14, col, "semibold", anchor="rm")
-        c.at(right - c.tw(txt, 14, "semibold") - 6, cy + 11, "hoje", 12, DIM, anchor="rm")
+        c.rrect(right - bw, cy - 25, right, cy - 7, 9, outline=bc, width=1.2)
+        c.at(right - bw / 2, cy - 16, lab, 11, bc, "bold", anchor="mm")
+    if ex.wallet_balance is not None:
+        c.at(right, cy + 6, "saldo " + _money(ex.wallet_balance).lstrip("+"), 12, DIM, "medium", anchor="rm")
+    if ex.wallet_n:
+        c.at(right, cy + 23, f"{ex.wallet_wins or 0}G {ex.wallet_losses or 0}P", 12, DIM, anchor="rm")
     c.y = c.px(y0 + h + GAP)
 
 

@@ -216,6 +216,17 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
     extras.wallet_n = a.n if a is not None else (0 if acc else None)
     extras.wallet_wins = a.wins if a is not None else 0
     extras.wallet_losses = a.losses if a is not None else 0
+    # Seu dia: saldo agora menos o primeiro saldo lido hoje nesta conta (todos os seus ganhos e
+    # perdas, mesmo os que o app não viu como operação).
+    extras.wallet_day = None
+    if acc and extras.wallet_balance is not None:
+        row = store.db.execute("SELECT balance FROM balances WHERE account=? AND ts<? ORDER BY ts DESC LIMIT 1",
+                               (acc, since)).fetchone()  # saldo com que o dia começou
+        if row is None:
+            first = store.balances(since=since, account=acc)
+            row = (first[0][2],) if first else None
+        if row is not None:
+            extras.wallet_day = extras.wallet_balance - row[0]
     if acc is None:
         extras.wallet_line, extras.wallet_profit = "Carteira: saldo não lido ainda", None
     elif a is None:
