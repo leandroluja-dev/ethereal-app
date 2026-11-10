@@ -369,6 +369,10 @@ def cmd_live(args) -> int:
                         wallet_dirty = True
                     if key == ord("g"):
                         extras.chart = not extras.chart
+                click = panel.pop_click()
+                if click == "carteira" and wallet_view is not None:
+                    wallet_view.toggle()
+                    wallet_dirty = True
                 if not panel.is_open():
                     print("painel fechado pela janela", flush=True)
                     break  # fechou pela bolinha vermelha

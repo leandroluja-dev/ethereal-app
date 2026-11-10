@@ -139,6 +139,12 @@ class WalletWindow:
     def show(self, img: np.ndarray) -> None:
         if not self.visible:
             return
+        from ..platform.appmode import reopen, was_closed
+
+        if self._shown and was_closed(self.NAME):
+            reopen(self.NAME)
+            self.hide()
+            return
         if self._shown:
             try:  # fechada pela bolinha vermelha
                 if self.cv2.getWindowProperty(self.NAME, self.cv2.WND_PROP_VISIBLE) < 1:
@@ -147,6 +153,10 @@ class WalletWindow:
             except Exception:
                 pass
         self.cv2.imshow(self.NAME, img)
+        if not self._shown:
+            from ..platform.appmode import window_buttons
+
+            window_buttons(self.NAME)
         self._shown = True
         try:
             self.cv2.setWindowProperty(self.NAME, self.cv2.WND_PROP_TOPMOST, 1)

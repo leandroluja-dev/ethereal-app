@@ -18,3 +18,12 @@ def test_render_scaled():
     r = reading(candles_from_path(zigzag_up()))
     img = render(RuleEngine().evaluate(r), r, scale=1.5)
     assert img.shape[1] == int(W * 1.5)
+
+
+def test_wallet_button_hit():
+    from candlesense.ui.panel import hit_button
+
+    assert hit_button(380, 20) == "carteira"
+    assert hit_button(760, 40, scale=2.0) == "carteira"
+    assert hit_button(100, 20) is None
+    assert hit_button(380, 300) is None

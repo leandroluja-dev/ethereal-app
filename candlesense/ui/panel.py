@@ -132,6 +132,33 @@ class PanelExtras:
     exit_alert: Optional[str] = None
     details: bool = False       # explicação dos módulos (tecla d)
     chart: bool = True          # mini gráfico ao vivo
+    buttons: bool = True        # botão Carteira no topo
+
+
+# Botões desenhados no próprio painel (a janela do OpenCV não tem barra de título no modo app).
+# (x1, y1, x2, y2) em unidades do painel, antes da escala.
+BUTTONS = {
+    "carteira": (W - PAD - 86, 8, W - PAD, 38),
+}
+
+
+def _buttons(c: "_Canvas") -> None:
+    white = (255, 255, 255)
+    x1, y1, x2, y2 = BUTTONS["carteira"]
+    c.d.rounded_rectangle([c.px(x1), c.px(y1), c.px(x2), c.px(y2)], radius=c.px(6),
+                          outline=white, width=max(1, c.px(2)))
+    f = _font(c.px(13), True)
+    tw = c.d.textlength("Carteira", font=f)
+    c.d.text((c.px((x1 + x2) / 2) - tw / 2, c.px(y1 + 7)), "Carteira", font=f, fill=white)
+
+
+def hit_button(x: float, y: float, scale: float = 1.0) -> Optional[str]:
+    """Qual botão do painel está no ponto (x, y) da imagem, em pixels."""
+    ux, uy = x / scale, y / scale
+    for name, (x1, y1, x2, y2) in BUTTONS.items():
+        if x1 - 4 <= ux <= x2 + 4 and y1 - 4 <= uy <= y2 + 4:
+            return name
+    return None
 
 
 def _mini_chart(c: "_Canvas", reading: ChartReading, n: int = 36, h: float = 92) -> None:
@@ -213,14 +240,20 @@ def render(decision: Decision, reading: Optional[ChartReading] = None, scale: fl
     """Imagem BGR do painel."""
     c = _Canvas(scale)
     d = decision
-    ex = extras or PanelExtras(details=True, chart=False)
+    ex = extras or PanelExtras(details=True, chart=False, buttons=False)
     head = HEAD_COLOR.get(d.action, GREY)
 
     # Faixa principal
     hh = 86
     c.d.rectangle([0, 0, c.w, c.px(hh)], fill=head)
     c.y = c.px(10)
-    c.text(PAD, d.action, 34, (255, 255, 255), bold=True)
+    size = 34
+    room = (BUTTONS["carteira"][0] - PAD - 8) if ex.buttons else W - 2 * PAD
+    while size > 20 and c.d.textlength(d.action, font=_font(c.px(size), True)) > c.px(room):
+        size -= 2
+    c.text(PAD, d.action, size, (255, 255, 255), bold=True, dy=(34 - size) / 2)
+    if ex.buttons:
+        _buttons(c)
     if d.signal and d.best is not None:
         c.text(PAD, f"{_pct(d.best.prob)}  ·  {d.expiry_text()}", 18, (255, 255, 255), dy=46)
     elif d.action == INCERTA:
@@ -342,6 +375,12 @@ class PanelWindow:
         self._topmost()
         self._seen_open = False
         self._placed = False
+        self._click: Optional[str] = None
+        self._frames = 0
+        try:
+            cv2.setMouseCallback(self.NAME, self._on_mouse)
+        except Exception:
+            pass
         self.place: Optional[tuple[int, int]] = None  # canto de cima à esquerda, em pontos da tela
 
     def _topmost(self) -> None:
@@ -353,6 +392,11 @@ class PanelWindow:
     def show(self, decision: Decision, reading: Optional[ChartReading] = None,
              extras: Optional[PanelExtras] = None) -> None:
         self.cv2.imshow(self.NAME, render(decision, reading, self.scale, extras))
+        self._frames += 1
+        if self._frames in (1, 3, 10) or self._frames % 50 == 0:
+            from ..platform.appmode import window_buttons
+
+            window_buttons(self.NAME)  # barra normal do Mac: fechar e minimizar
         if not self._placed and self.place is not None:
             try:
                 self.cv2.moveWindow(self.NAME, *self.place)
@@ -360,12 +404,25 @@ class PanelWindow:
                 pass
             self._placed = True
 
+    def _on_mouse(self, event, x, y, flags, param) -> None:
+        if event == self.cv2.EVENT_LBUTTONUP:
+            self._click = hit_button(x, y, self.scale)
+
+    def pop_click(self) -> Optional[str]:
+        """O botão clicado desde a última vez ('carteira') ou None."""
+        c, self._click = self._click, None
+        return c
+
     def is_open(self) -> bool:
         """Falso só se a janela já foi vista aberta e agora sumiu (bolinha vermelha).
 
         Em alguns sistemas o OpenCV não informa a propriedade (devolve -1 sempre);
         nesse caso a janela é considerada aberta e o painel fecha só com q/Esc.
         """
+        from ..platform.appmode import was_closed
+
+        if was_closed(self.NAME):
+            return False
         try:
             v = self.cv2.getWindowProperty(self.NAME, self.cv2.WND_PROP_VISIBLE)
         except Exception:
