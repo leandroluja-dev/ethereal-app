@@ -57,3 +57,17 @@ def test_wallet_inside_panel():
     assert wv.image is img and img.shape[1] == W
     wv.toggle()
     assert not wv.visible and wv.image is None
+
+
+def test_open_trade_live_result():
+    """Operação aberta: ganhando/perdendo pelo preço atual e a direção."""
+    from candlesense.ui.panel import PanelExtras, _live_result
+
+    t = {"amount": 2.0, "direction": "COMPRA", "entry_price": 1.1, "payout": 86, "seconds_left": 30}
+    assert _live_result(t, 1.1003) == (2.0 * 0.86, "ganhando")
+    assert _live_result(t, 1.0990) == (-2.0, "perdendo")
+    assert _live_result({**t, "direction": "VENDA"}, 1.0990)[1] == "ganhando"
+    assert _live_result({**t, "direction": None}, 1.1003) == (None, None)
+    r = reading(candles_from_path(zigzag_up()), timeframe=60)
+    img = render(RuleEngine().evaluate(r), r, extras=PanelExtras(wallet_n=1, open_trade=t, exit_alert="virou"))
+    assert img.shape[1] == W

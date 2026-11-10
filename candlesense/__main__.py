@@ -208,8 +208,11 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
         falta = max(0, int(t.expiry_ts - now))
         lado = {"COMPRA": " (compra)", "VENDA": " (venda)"}.get(t.app_action or "", "")
         extras.open_line = f"Operação aberta: ${t.amount:,.2f}{lado} · expira em {falta // 60}:{falta % 60:02d}"
+        extras.open_trade = {"amount": t.amount, "direction": t.app_action, "entry_price": t.entry_price,
+                             "payout": t.payout, "seconds_left": falta}
     else:
         extras.open_line = None
+        extras.open_trade = None
     if wallet_view is not None and wallet_view.visible:
         from .history.scoreboard import score
         from .ui.wallet_view import render_wallet
