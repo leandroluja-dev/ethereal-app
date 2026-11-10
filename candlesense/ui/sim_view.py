@@ -1,6 +1,6 @@
 """Telas ao lado do painel: as carteiras do simulador (entradas de mentira).
 
-* Tela do meio, "Carteiras do app": cinco carteiras empilhadas (A 62%, B 58% e três de risco a 55%: vela de 5 min, vela de 1 min e 30 s), cada uma com cor e
+* Tela do meio, "Carteiras do app": cinco carteiras empilhadas (A 62%, B 58% e três de risco a 58% (55% até 10/11/2026 18h): vela de 5 min, vela de 1 min e 30 s), cada uma com cor e
   letra próprias. Mostra a entrada aberta ao vivo (valor, quanto ganha, ganhando ou
   perdendo, quanto falta), o aviso de GANHOU / PERDEU, o resultado de hoje e as
   últimas entradas.
@@ -49,15 +49,17 @@ class WalletSpec:
 
 PURPLE = (176, 122, 255)
 PINK = (255, 112, 166)
-RISK_CUT = 0.55
+RISK_CUT = 0.58
+OLD_RISK_CUT = 0.55  # corte das carteiras de risco até RISK_CUT_SINCE (as entradas antigas continuam valendo)
+RISK_CUT_SINCE = __import__("time").mktime((2026, 11, 10, 18, 5, 0, 0, 0, -1))
 
 WALLETS = (
     WalletSpec("A", "Segura", 0.62, GREEN, "62% · vence em 5 min", "62%"),
     WalletSpec("B", "Moderada", 0.58, BLUE, "58% · vence em 5 min", "58%"),
-    WalletSpec("C", "Vela de 5 min", RISK_CUT, ORANGE, "55% · fim da vela de 5 min", "RISCO",
+    WalletSpec("C", "Vela de 5 min", RISK_CUT, ORANGE, "58% · fim da vela de 5 min", "RISCO",
                mode="candle5"),
-    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "55% · fim da vela de 1 min", "RISCO", mode="1min"),
-    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "55% · sai em 30 s", "RISCO", mode="30s"),
+    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "58% · fim da vela de 1 min", "RISCO", mode="1min"),
+    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "58% · sai em 30 s", "RISCO", mode="30s"),
 )
 
 
@@ -581,7 +583,7 @@ def _model_card(c: _Canvas, st: SimState, x1: float, y0: float, x2: float, h: fl
     _icon(c, "up" if buy else "down", inner, y0 + h - 58, col, 16)
     c.at(inner + 22, y0 + h - 50, "compra" if buy else "venda", 15, col, "semibold", anchor="lm")
     c.at(right, y0 + h - 18, _pc(ch), 40, FG, "regular", anchor="rs")
-    c.at(inner, y0 + h - 22, f"conta das {_hhmm(st.last_ts)} · entra a partir de 55%", 11, DIM, anchor="ls")
+    c.at(inner, y0 + h - 22, f"conta das {_hhmm(st.last_ts)} · entra a partir de 58%", 11, DIM, anchor="ls")
     _bar(c, inner, right, y0 + 40, (ch - 0.5) / 0.12, col)
     for cut in (0.55, 0.58, 0.62):  # marquinhas dos cortes das carteiras
         x = inner + (right - inner) * (cut - 0.5) / 0.12

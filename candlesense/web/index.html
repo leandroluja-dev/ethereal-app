@@ -359,8 +359,8 @@ button { font: inherit; color: inherit; }
     const now = Math.floor(Date.now() / 1000);
     let seed = 7; const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
     const specs = [["A","Segura",.62,"62% · vence em 5 min",""],["B","Moderada",.58,"58% · vence em 5 min",""],
-      ["C","Vela de 5 min",.55,"55% · fim da vela de 5 min","RISCO"],["D","Vela de 1 min",.55,"55% · fim da vela de 1 min","RISCO"],
-      ["E","Rápida 30 s",.55,"55% · sai em 30 s","RISCO"]];
+      ["C","Vela de 5 min",.58,"58% · fim da vela de 5 min","RISCO"],["D","Vela de 1 min",.58,"58% · fim da vela de 1 min","RISCO"],
+      ["E","Rápida 30 s",.58,"58% · sai em 30 s","RISCO"]];
     const entries = [];
     for (let i = 26; i >= 0; i--) {
       const ts = now - i * 160 - 20, ch = .55 + rnd() * .1, side = rnd() > .5 ? "COMPRA" : "VENDA";
