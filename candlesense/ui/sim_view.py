@@ -27,7 +27,7 @@ from .panel import (BLACK, CARD, CARD_2, DIM, FAINT, FG, GAP, GREEN, LINE, ORANG
 BLUE = (88, 160, 255)
 GAP_PX = 6        # faixa preta entre as telas (pixels de saída, antes da escala)
 FLASH_S = 25      # o aviso de GANHOU / PERDEU fica este tempo
-MIN_HEIGHT = 1000 # altura mínima da janela com as carteiras (unidades do painel)
+MIN_HEIGHT = 1050 # altura mínima da janela com as carteiras (unidades do painel)
 WEEK = ("segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo")
 BANDS = ((0.58, 0.60), (0.60, 0.62), (0.62, 0.64), (0.64, 0.66), (0.66, 0.70), (0.70, 1.01))
 
@@ -52,12 +52,12 @@ PINK = (255, 112, 166)
 RISK_CUT = 0.55
 
 WALLETS = (
-    WalletSpec("A", "Segura", 0.62, GREEN, "a partir de 62% · vence em 5 min", "62%"),
-    WalletSpec("B", "Moderada", 0.58, BLUE, "a partir de 58% · vence em 5 min", "58%"),
-    WalletSpec("C", "Vela de 5 min", RISK_CUT, ORANGE, "55% · vence no fim da vela de 5 min", "RISCO",
+    WalletSpec("A", "Segura", 0.62, GREEN, "62% · vence em 5 min", "62%"),
+    WalletSpec("B", "Moderada", 0.58, BLUE, "58% · vence em 5 min", "58%"),
+    WalletSpec("C", "Vela de 5 min", RISK_CUT, ORANGE, "55% · fim da vela de 5 min", "RISCO",
                mode="candle5"),
-    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "55% · vence no fim da próxima vela", "RISCO", mode="1min"),
-    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "55% · entra e sai em 30 segundos", "RISCO", mode="30s"),
+    WalletSpec("D", "Vela de 1 min", RISK_CUT, PURPLE, "55% · fim da vela de 1 min", "RISCO", mode="1min"),
+    WalletSpec("E", "Rápida 30 s", RISK_CUT, PINK, "55% · sai em 30 s", "RISCO", mode="30s"),
 )
 
 
@@ -77,6 +77,7 @@ class SimState:
     stake: float = 10.0
     last_p: Optional[float] = None       # última chance de subir calculada pelo modelo neste par
     last_ts: Optional[float] = None
+    past: list = field(default_factory=list)  # dias anteriores (SimBook.past_days)
 
     def get(self, key: str) -> list:
         return self.entries.get(key, [])
@@ -86,7 +87,30 @@ class SimState:
         live = tuple((k, e["start"], e["status"], e.get("seen_at")) for k, es in sorted(self.entries.items())
                      for e in es)
         return (live, int(self.now), self.asset, self.price, self.hist_min, self.note, self.available,
-                self.last_ts)
+                self.last_ts, len(self.past))
+
+    def today_profit(self) -> dict:
+        return {w.key: day_summary(self.get(w.key))["profit"] for w in WALLETS}
+
+    def balances(self) -> dict:
+        from ..history.simbook import balances
+
+        return balances(self.past, self.today_profit(), [w.key for w in WALLETS])
+
+    def days(self) -> list:
+        """Todos os dias com entradas, do mais antigo para hoje: [{day, label, w}]."""
+        from ..history.simbook import day_label
+
+        out = list(self.past)
+        today = {}
+        for w in WALLETS:
+            sm = day_summary(self.get(w.key))
+            if sm["n"]:
+                today[w.key] = sm
+        if today:
+            d = time.strftime("%Y-%m-%d", time.localtime(self.now or time.time()))
+            out.append({"day": d, "label": "hoje", "w": today})
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +227,14 @@ def _wallet_band(c: _Canvas, spec: WalletSpec, st: SimState, y0: float, h: float
     _letter(c, inner, y0 + 24, spec)
     c.at(inner + 28, y0 + 24, spec.name, 16, FG, "semibold", anchor="lm")
     _chip(c, inner + 28 + c.tw(spec.name, 16, "semibold") + 8, y0 + 24, spec.tag, spec.color)
-    c.at(right, y0 + 24, brl(s["profit"]) if s["done"] else "R$ 0,00", 17, _col(s["profit"]), "bold", anchor="rm")
+    bal = st.balances().get(spec.key)
+    if bal is not None:
+        c.at(right, y0 + 24, brl(bal, False), 17, FG, "bold", anchor="rm")
     c.at(inner, y0 + 46, spec.desc, 12, DIM, anchor="lm")
-    stats = f"{s['wins']}G {s['losses']}P" + (f" · {_pc(s['acc'])}" if s["acc"] is not None else "")
+    day = brl(s["profit"]) if s["done"] else "R$ 0,00"
+    stats = f" · {s['wins']}G {s['losses']}P"
     c.at(right, y0 + 46, stats, 12, DIM, anchor="rm")
+    c.at(right - c.tw(stats, 12), y0 + 46, "hoje " + day, 12, _col(s["profit"]), "semibold", anchor="rm")
     c.d.line([(c.px(inner), c.px(y0 + 62)), (c.px(right), c.px(y0 + 62))], fill=LINE, width=c.px(1))
     # ao vivo
     ly = y0 + 70
@@ -295,7 +323,7 @@ def _fit(c: _Canvas, height: float) -> np.ndarray:
 def render_wallets(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
     """Tela do meio: as carteiras, uma embaixo da outra (as de risco por último)."""
     c = _Canvas(scale, height=int(height) + 40)
-    _head(c, "Carteiras do app", f"{brl(st.stake, False)} por entrada · conta de mentira")
+    _head(c, "Carteiras do app", f"{brl(st.stake, False)} por entrada · cada uma começou com R$ 10 mil")
     bottom = _footer(c, height, "Simulação: o app nunca clica nem opera.")
     top = c.u
     bh = (bottom - top - (len(WALLETS) - 1) * GAP) / len(WALLETS)
@@ -311,7 +339,24 @@ def render_day(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
     _head(c, "Resultados do dia", f"{WEEK[lt.tm_wday]}, {lt.tm_mday:02d}/{lt.tm_mon:02d} · desde 00:00")
     bottom = _footer(c, height, "Simulação: o app nunca clica nem opera.")
     inner, right = PAD + 16, W - PAD - 16
-    # as carteiras
+    # total do dia (todas as carteiras juntas)
+    tot = day_summary([e for w in WALLETS for e in st.get(w.key)])
+    y0 = c.u
+    c.card(y0, y0 + 76)
+    c.at(inner, y0 + 22, "Total do dia", 12, DIM, anchor="lm")
+    tp = tot["profit"] if tot["done"] else 0.0
+    c.at(inner, y0 + 50, brl(tp) if tot["done"] else "R$ 0,00", 26, _col(tp), "bold", anchor="lm")
+    if tot["done"]:
+        lab = "GREEN" if tp > 0 else "LOSS" if tp < 0 else "ZERO"
+        bx = inner + c.tw(brl(tp), 26, "bold") + 10
+        bw = c.tw(lab, 11, "bold") + 16
+        c.rrect(bx, y0 + 41, bx + bw, y0 + 59, 9, fill=_col(tp) if tp else None, outline=None if tp else DIM,
+                width=1.2)
+        c.at(bx + bw / 2, y0 + 50, lab, 11, BLACK if tp else DIM, "bold", anchor="mm")
+    acc = f"acerto {_pc(tot['acc'])}" if tot["acc"] is not None else "sem resultado"
+    c.at(right, y0 + 22, f"{tot['n']} entradas · {tot['wins']}G {tot['losses']}P · {acc}", 12, DIM, anchor="rm")
+    c.y = c.px(y0 + 76 + GAP)
+    # cada carteira
     y0, rh = c.u, 46
     c.card(y0, y0 + len(WALLETS) * rh + 8)
     for i, spec in enumerate(WALLETS):
@@ -369,18 +414,168 @@ def render_day(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
     return _fit(c, height)
 
 
-def side_screens(st: SimState, height_px: int, scale: float = 1.0) -> np.ndarray:
-    """As duas telas lado a lado, na altura exata pedida (pixels de saída)."""
-    h_units = height_px / scale
-    gap = np.zeros((height_px, max(1, int(round(GAP_PX * scale))), 3), np.uint8)
+# ---------------------------------------------------------------------------
+# Histórico
+# ---------------------------------------------------------------------------
+
+def render_hist_wallets(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
+    """Histórico, esquerda: saldo de cada carteira desde o começo e a evolução do saldo somado."""
+    from ..history.simbook import START_BALANCE, START_TS
+
+    c = _Canvas(scale, height=int(height) + 40)
+    _head(c, "Saldo das carteiras", f"cada uma começou com {brl(START_BALANCE, False)} em "
+                                    f"{time.strftime('%d/%m', time.localtime(START_TS))}")
+    bottom = _footer(c, height, "Simulação: o app nunca clica nem opera.")
+    inner, right = PAD + 16, W - PAD - 16
+    days = st.days()
+    bals = st.balances()
+    y0, rh = c.u, 62
+    c.card(y0, y0 + len(WALLETS) * rh + 8)
+    for i, spec in enumerate(WALLETS):
+        y = y0 + 4 + i * rh
+        if i:
+            c.d.line([(c.px(inner), c.px(y)), (c.px(right), c.px(y))], fill=LINE, width=c.px(1))
+        n = sum(d["w"].get(spec.key, {}).get("n", 0) for d in days)
+        wins = sum(d["w"].get(spec.key, {}).get("wins", 0) for d in days)
+        losses = sum(d["w"].get(spec.key, {}).get("losses", 0) for d in days)
+        total = bals[spec.key] - START_BALANCE
+        _letter(c, inner, y + rh / 2, spec, 11)
+        c.at(inner + 30, y + rh / 2 - 10, spec.name, 14, FG, "semibold", anchor="lm")
+        acc = f" · {_pc(wins / (wins + losses))} de acerto" if wins + losses else ""
+        c.at(inner + 30, y + rh / 2 + 10, f"{n} entradas{acc}", 12, DIM, anchor="lm")
+        c.at(right, y + rh / 2 - 10, brl(bals[spec.key], False), 16, FG, "bold", anchor="rm")
+        c.at(right, y + rh / 2 + 10, brl(total) if n else "sem entradas", 12,
+             _col(total) if n else DIM, "semibold" if n else None, anchor="rm")
+    c.y = c.px(y0 + len(WALLETS) * rh + 8 + GAP)
+    # evolução: saldo de cada carteira no fim de cada dia
+    if bottom - c.u > 200:
+        _label(c, "SALDO NO FIM DE CADA DIA")
+        y0 = c.u
+        h = min(420.0, bottom - y0 - 4)
+        c.card(y0, y0 + h)
+        x1, x2, top, bot = inner + 4, right - 4, y0 + 18, y0 + h - 34
+        series = {}
+        for spec in WALLETS:
+            v, pts = START_BALANCE, [START_BALANCE]
+            for d in days:
+                v += d["w"].get(spec.key, {}).get("profit", 0.0)
+                pts.append(v)
+            series[spec.key] = pts
+        allv = [v for pts in series.values() for v in pts]
+        lo, hi = min(allv), max(allv)
+        pad = max(20.0, (hi - lo) * 0.15)
+        lo, hi = lo - pad, hi + pad
+        yb = top + (hi - START_BALANCE) / (hi - lo) * (bot - top)
+        c.d.line([(c.px(x1), c.px(yb)), (c.px(x2), c.px(yb))], fill=LINE, width=c.px(1))
+        c.at(x2, yb - 4, "início " + brl(START_BALANCE, False), 10, FAINT, anchor="rs")
+        n = len(days) + 1
+        for spec in WALLETS:
+            pts = series[spec.key]
+            xy = [(c.px(x1 + (x2 - x1) * (i / max(1, n - 1))), c.px(top + (hi - v) / (hi - lo) * (bot - top)))
+                  for i, v in enumerate(pts)]
+            if len(xy) > 1:
+                c.d.line(xy, fill=spec.color, width=c.px(2), joint="curve")
+            xe, ye = xy[-1]
+            c.d.ellipse([xe - c.px(3), ye - c.px(3), xe + c.px(3), ye + c.px(3)], fill=spec.color)
+        c.at(x1, y0 + h - 14, "começo", 11, FAINT, anchor="lm")
+        if days:
+            c.at(x2, y0 + h - 14, days[-1]["label"], 11, FAINT, anchor="rm")
+        c.y = c.px(y0 + h + GAP)
+    return _fit(c, height)
+
+
+def render_hist_days(st: SimState, height: float, scale: float = 1.0) -> np.ndarray:
+    """Histórico, direita: dia a dia, o total e o resultado de cada carteira."""
+    c = _Canvas(scale, height=int(height) + 40)
+    days = st.days()[::-1]
+    _head(c, "Dia a dia", f"{len(days)} dia(s) com entradas" if days else "nenhum dia com entradas ainda")
+    bottom = _footer(c, height, "Simulação: o app nunca clica nem opera.")
+    inner, right = PAD + 16, W - PAD - 16
+    dh = 92
+    y = c.u
+    if not days:
+        c.card(y, y + 60)
+        c.at(W / 2, y + 30, "as entradas aparecem aqui conforme o app joga", 13, DIM, anchor="mm")
+    for d in days:
+        if y + dh > bottom:
+            break
+        c.card(y, y + dh - 8)
+        ws = d["w"]
+        tot = sum(v.get("profit", 0.0) for v in ws.values())
+        n = sum(v.get("n", 0) for v in ws.values())
+        wins = sum(v.get("wins", 0) for v in ws.values())
+        losses = sum(v.get("losses", 0) for v in ws.values())
+        c.at(inner, y + 20, d["label"], 14, FG, "semibold", anchor="lm")
+        acc = f" · {_pc(wins / (wins + losses))}" if wins + losses else ""
+        c.at(inner + c.tw(d["label"], 14, "semibold") + 8, y + 20, f"{n} entradas{acc}", 12, DIM, anchor="lm")
+        c.at(right, y + 20, brl(tot), 16, _col(tot), "bold", anchor="rm")
+        # uma pastilha por carteira
+        cw = (right - inner) / len(WALLETS)
+        for i, spec in enumerate(WALLETS):
+            x = inner + i * cw
+            v = ws.get(spec.key)
+            _letter(c, x, y + 56, spec, 7)
+            txt = brl(v["profit"]).replace("R$ ", "") if v else "—"
+            c.at(x + 18, y + 56, txt, 11, _col(v["profit"]) if v else FAINT, "semibold", anchor="lm")
+        y += dh
+    return _fit(c, height)
+
+
+# ---------------------------------------------------------------------------
+# Abas e montagem
+# ---------------------------------------------------------------------------
+
+TABS = (("hoje", "Hoje"), ("historico", "Histórico"))
+TAB_H = 46
+
+
+def _tab_rects(total_w: float) -> list:
+    """[(aba, x1, x2)] em unidades do painel, para desenhar e para o clique."""
+    out, x = [], PAD + 6
+    for key, name in TABS:
+        w = 24 + len(name) * 8.6
+        out.append((key, x, x + w))
+        x += w + 8
+    return out
+
+
+def render_tabs(tab: str, total_w: float, scale: float, st: Optional[SimState] = None) -> np.ndarray:
+    c = _Canvas(scale, height=TAB_H + 4, width=int(round(total_w)))
+    for key, x1, x2 in _tab_rects(total_w):
+        on = key == tab
+        c.rrect(x1, 8, x2, 38, 15, fill=FG if on else CARD, outline=None if on else LINE, width=1)
+        c.at((x1 + x2) / 2, 23, dict(TABS)[key], 13, BLACK if on else DIM, "semibold", anchor="mm")
+    c.at(total_w - PAD - 6, 23, "h troca a aba", 11, FAINT, anchor="rm")
+    c.y = c.px(TAB_H)
+    img = c.crop(min_h=TAB_H)
+    return img[: int(round(TAB_H * scale))]
+
+
+def side_screens(st: SimState, height_px: int, scale: float = 1.0, tab: str = "hoje") -> np.ndarray:
+    """As abas e as duas telas lado a lado, na altura exata pedida (pixels de saída)."""
+    gw = max(1, int(round(GAP_PX * scale)))
+    tabs_px = int(round(TAB_H * scale))
+    body_px = max(1, height_px - tabs_px)
+    h_units = body_px / scale
+    pair = (render_hist_wallets, render_hist_days) if tab == "historico" else (render_wallets, render_day)
     imgs = []
-    for im in (render_wallets(st, h_units, scale), render_day(st, h_units, scale)):
-        if im.shape[0] > height_px:
-            im = im[:height_px]
-        elif im.shape[0] < height_px:
-            im = np.vstack([im, np.zeros((height_px - im.shape[0], im.shape[1], 3), np.uint8)])
+    for fn in pair:
+        im = fn(st, h_units, scale)
+        if im.shape[0] > body_px:
+            im = im[:body_px]
+        elif im.shape[0] < body_px:
+            im = np.vstack([im, np.zeros((body_px - im.shape[0], im.shape[1], 3), np.uint8)])
         imgs.append(im)
-    return np.hstack([gap, imgs[0], gap, imgs[1]])
+    gap = np.zeros((body_px, gw, 3), np.uint8)
+    body = np.hstack([gap, imgs[0], gap, imgs[1]])
+    bar = render_tabs(tab, body.shape[1] / scale, scale, st)
+    if bar.shape[1] != body.shape[1]:
+        bar = np.ascontiguousarray(bar[:, : body.shape[1]]) if bar.shape[1] > body.shape[1] else \
+            np.hstack([bar, np.zeros((bar.shape[0], body.shape[1] - bar.shape[1], 3), np.uint8)])
+    if bar.shape[0] != tabs_px:
+        bar = bar[:tabs_px] if bar.shape[0] > tabs_px else \
+            np.vstack([bar, np.zeros((tabs_px - bar.shape[0], bar.shape[1], 3), np.uint8)])
+    return np.vstack([bar, body])
 
 
 class SideScreens:
@@ -390,8 +585,24 @@ class SideScreens:
         self.scale = scale
         self.state: Optional[SimState] = None
         self.visible = True
+        self.tab = "hoje"
         self._key = None
         self._img: Optional[np.ndarray] = None
+
+    def next_tab(self) -> None:
+        keys = [k for k, _ in TABS]
+        self.tab = keys[(keys.index(self.tab) + 1) % len(keys)]
+
+    def click(self, x_px: float, y_px: float) -> bool:
+        """Clique nas telas (x a partir da borda esquerda delas). Devolve True se trocou de aba."""
+        x, y = x_px / self.scale, y_px / self.scale
+        if not (0 <= y <= TAB_H):
+            return False
+        for key, x1, x2 in _tab_rects(0):
+            if x1 <= x <= x2 and key != self.tab:
+                self.tab = key
+                return True
+        return False
 
     def height(self, panel_px: int) -> int:
         """Altura da janela com as carteiras: a do painel ou a mínima das carteiras."""
@@ -400,8 +611,8 @@ class SideScreens:
     def image(self, height_px: int) -> Optional[np.ndarray]:
         if not self.visible or self.state is None:
             return None
-        key = (self.state.key(), height_px, self.scale)
+        key = (self.state.key(), height_px, self.scale, self.tab)
         if key != self._key or self._img is None:
-            self._img = side_screens(self.state, height_px, self.scale)
+            self._img = side_screens(self.state, height_px, self.scale, self.tab)
             self._key = key
         return self._img

@@ -220,6 +220,9 @@ BUTTONS = {
 }
 
 
+GAP_SIDE = 6  # faixa preta antes das telas das carteiras (sim_view.GAP_PX)
+
+
 def hit_button(x: float, y: float, scale: float = 1.0) -> Optional[str]:
     """Qual botão do painel está no ponto (x, y) da imagem, em pixels."""
     ux, uy = x / scale, y / scale
@@ -750,7 +753,7 @@ def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading], ex: Option
     st += " · " + ("probabilidade corrigida pelo placar" if d.calibrated else "probabilidade por regras")
     c.para(st, 11, FAINT, gap=4)
     c.para("Só lê a tela: nunca clica e nunca opera.", 11, FAINT, gap=4)
-    c.para("Teclas: c carteira · d detalhes · g gráfico · e entradas · + − tamanho · q fechar", 11, FAINT, gap=4)
+    c.para("Teclas: c carteira · d detalhes · g gráfico · e carteiras · h histórico · + − tamanho · q fechar", 11, FAINT, gap=4)
 
 
 def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0,
@@ -844,6 +847,8 @@ class PanelWindow:
                 if side is not None:
                     if full > img.shape[0]:  # o painel fica no alto; embaixo dele, fundo preto
                         img = np.vstack([img, np.zeros((full - img.shape[0], img.shape[1], 3), np.uint8)])
+                    self._side_x0 = img.shape[1]  # onde começam as telas (para o clique nas abas)
+                    self._sides = sides
                     img = np.hstack([img, side])
             except Exception as e:  # as telas novas nunca derrubam o painel
                 print(f"telas das entradas: {e!r}", flush=True)
@@ -930,6 +935,10 @@ class PanelWindow:
             now = "down" if over else None
         elif event == cv2.EVENT_LBUTTONUP:
             self._click = over
+            sides, x0 = getattr(self, "_sides", None), getattr(self, "_side_x0", None)
+            if sides is not None and x0 is not None and x >= x0 and sides.visible:
+                if sides.click(x - x0 - GAP_SIDE * self.scale, y):
+                    self._hover_changed = True  # redesenha com a aba nova
             now = "hover" if over else None
         elif event == cv2.EVENT_MOUSEMOVE:
             pressed = bool(flags & cv2.EVENT_FLAG_LBUTTON)

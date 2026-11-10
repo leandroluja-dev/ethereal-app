@@ -256,17 +256,9 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
     extras.wallet_n = a.n if a is not None else (0 if acc else None)
     extras.wallet_wins = a.wins if a is not None else 0
     extras.wallet_losses = a.losses if a is not None else 0
-    # Seu dia: saldo agora menos o primeiro saldo lido hoje nesta conta (todos os seus ganhos e
-    # perdas, mesmo os que o app não viu como operação).
-    extras.wallet_day = None
-    if acc and extras.wallet_balance is not None:
-        row = store.db.execute("SELECT balance FROM balances WHERE account=? AND ts<? ORDER BY ts DESC LIMIT 1",
-                               (acc, since)).fetchone()  # saldo com que o dia começou
-        if row is None:
-            first = store.balances(since=since, account=acc)
-            row = (first[0][2],) if first else None
-        if row is not None:
-            extras.wallet_day = extras.wallet_balance - row[0]
+    # Seu dia: soma das operações de hoje (ganhos e perdas). Recarga da conta de treino,
+    # depósito e saque mudam o saldo mas não são operação: ficam de fora.
+    extras.wallet_day = (a.profit if a is not None else 0.0) if acc else None
     if acc is None:
         extras.wallet_line, extras.wallet_profit = "Carteira: saldo não lido ainda", None
     elif a is None:
@@ -327,6 +319,13 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
             if k in seen_at:
                 e["seen_at"] = seen_at[k]
         all_entries[spec.key] = entries
+    book = sim.__dict__.get("_book")
+    if book is None:
+        from .history.simbook import SimBook
+
+        book = sim.__dict__["_book"] = SimBook(strong.db)
+    for k, es in all_entries.items():
+        book.record(k, es)
     if sound and play_sound:
         play(sound)
     note = None
@@ -339,7 +338,8 @@ def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
     sim.state = SimState(entries=all_entries, now=now, asset=asset if asset != "?" else None,
                          price=r.current_price if r.ok else None,
                          decimals=r.scale.decimals if r.scale else 5, hist_min=hist, note=note,
-                         last_p=last[1] if last else None, last_ts=last[0] if last else None)
+                         last_p=last[1] if last else None, last_ts=last[0] if last else None,
+                         past=book.past_days(day_start(now), now))
 
 
 def _market_extras(extras, market, store, asset: str, r) -> None:
@@ -409,6 +409,10 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
         act = "redesenhar"
     if key == ord("e") and sides is not None:
         sides.visible = not sides.visible
+        act = "redesenhar"
+    if key == ord("h") and sides is not None:
+        sides.visible = True
+        sides.next_tab()
         act = "redesenhar"
     if key in (ord("+"), ord("="), ord("-"), ord("_")) and hasattr(panel, "set_scale"):
         panel.set_scale(panel.scale * (1.1 if key in (ord("+"), ord("=")) else 1 / 1.1))
