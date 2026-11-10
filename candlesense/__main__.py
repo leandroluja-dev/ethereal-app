@@ -407,6 +407,10 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
     if key == ord("g"):
         extras.chart = not extras.chart
         act = "redesenhar"
+    if key == ord("w"):
+        import webbrowser
+
+        webbrowser.open("http://localhost:8765")
     if key == ord("e") and sides is not None:
         sides.visible = not sides.visible
         act = "redesenhar"
@@ -508,9 +512,16 @@ def _start_web(args):
         local, phone = web.urls()
         web.phone = phone
         print(f"página: {local}" + (f" · no celular (mesmo Wi-Fi): {phone}" if phone else ""), flush=True)
-        import webbrowser
+        def open_if_needed():  # a página já aberta se reconecta sozinha: não abre outra aba
+            time.sleep(4)
+            if not web.last_hit:
+                import webbrowser
 
-        webbrowser.open(local)
+                webbrowser.open(local)
+
+        import threading
+
+        threading.Thread(target=open_if_needed, name="abrir-pagina", daemon=True).start()
         return web
     except Exception as e:
         print(f"página indisponível: {e!r}", flush=True)
@@ -628,6 +639,8 @@ def cmd_live(args) -> int:
         from .ui.sim_view import SideScreens
 
         sides = SideScreens(scale=escala)
+        if web is not None:  # carteiras e linha do tempo ficam na página; aqui só o painel ao lado da IQ
+            sides.visible = False
         if strong is None:
             from .ui.sim_view import SimState
 

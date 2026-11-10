@@ -106,6 +106,7 @@ class WebServer:
         self._lock = threading.Lock()
         self._body = b'{"waiting": true}'
         self._at = 0.0
+        self.last_hit = 0.0  # última vez que alguma página aberta pediu o estado
         srv = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -114,6 +115,7 @@ class WebServer:
                 if path in ("/", "/index.html"):
                     body, ctype = PAGE.read_bytes(), "text/html; charset=utf-8"
                 elif path == "/api/state":
+                    srv.last_hit = time.time()
                     body, ctype = srv.body(), "application/json"
                 else:
                     self.send_error(404)

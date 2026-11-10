@@ -827,7 +827,7 @@ def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading], ex: Option
     st += " · " + ("probabilidade corrigida pelo placar" if d.calibrated else "probabilidade por regras")
     c.para(st, 11, FAINT, gap=4)
     c.para("Só lê a tela: nunca clica e nunca opera.", 11, FAINT, gap=4)
-    c.para("Teclas: c carteira · d detalhes · g gráfico · e carteiras · h histórico · + − tamanho · q fechar", 11, FAINT, gap=4)
+    c.para("Teclas: w página · c carteira · d detalhes · g gráfico · e carteiras aqui · + − tamanho · q fechar", 11, FAINT, gap=4)
 
 
 def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0,
