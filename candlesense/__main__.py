@@ -320,6 +320,29 @@ def _show_panel(panel, dec, r, extras, wallet_view, sides=None) -> None:
     panel.show(dec, r, extras, overlay=overlay, sides=sides)
 
 
+_SCALE_FILE: list = []  # caminho de dados/janela_escala.txt (definido ao abrir o painel)
+
+
+def _save_scale(scale: float) -> None:
+    try:
+        if _SCALE_FILE:
+            _SCALE_FILE[0].write_text(f"{scale:.2f}")
+    except OSError:
+        pass
+
+
+def _load_scale(dados, default: float) -> float:
+    """Tamanho do painel escolhido da última vez (puxando o canto ou com + e -)."""
+    p = Path(dados) / "janela_escala.txt"
+    _SCALE_FILE[:] = [p]
+    if default != 1.0:  # --painel-escala na linha de comando manda
+        return default
+    try:
+        return max(0.5, min(2.5, float(p.read_text().strip())))
+    except (OSError, ValueError):
+        return default
+
+
 def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1, sides=None):
     """Atende teclas e cliques do painel. Devolve "sair", "redesenhar" ou None."""
     key = (cv2.waitKey(wait_ms) & 0xFF) if poll else 255
@@ -335,6 +358,15 @@ def _panel_input(panel, wallet_view, extras, poll: bool = True, wait_ms: int = 1
         act = "redesenhar"
     if key == ord("e") and sides is not None:
         sides.visible = not sides.visible
+        act = "redesenhar"
+    if key in (ord("+"), ord("="), ord("-"), ord("_")) and hasattr(panel, "set_scale"):
+        panel.set_scale(panel.scale * (1.1 if key in (ord("+"), ord("=")) else 1 / 1.1))
+    new_scale = getattr(panel, "pop_scale_change", lambda: None)()
+    if new_scale:
+        for v in (wallet_view, sides):
+            if v is not None:
+                v.scale = new_scale
+        _save_scale(new_scale)
         act = "redesenhar"
     if getattr(panel, "pop_hover_change", lambda: False)():
         act = "redesenhar"  # mouse sobre o botão: muda a cor na hora
@@ -491,14 +523,15 @@ def cmd_live(args) -> int:
     if not args.sem_painel:
         from .ui.panel import PanelWindow
 
-        panel = PanelWindow(scale=args.painel_escala)
+        escala = _load_scale(args.dados, args.painel_escala)
+        panel = PanelWindow(scale=escala)
         panel.place = _panel_place(win)
         from .ui.wallet_view import WalletWindow
 
-        wallet_view = WalletWindow(scale=args.painel_escala)
+        wallet_view = WalletWindow(scale=escala)
         from .ui.sim_view import SideScreens
 
-        sides = SideScreens(scale=args.painel_escala)
+        sides = SideScreens(scale=escala)
         if strong is None:
             from .ui.sim_view import SimState
 

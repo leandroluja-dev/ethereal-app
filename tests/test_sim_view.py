@@ -3,6 +3,8 @@
 import sqlite3
 import wave
 
+import numpy as np
+
 from candlesense import alerts
 from candlesense.engine.strong import StrongMode
 from candlesense.ui.sim_view import (WALLETS, SideScreens, SimState, by_band, day_summary, live_result, merged,
@@ -141,3 +143,24 @@ def test_screen_price_stored_once_per_second():
     assert sm.db.execute("SELECT COUNT(*) FROM precos").fetchone()[0] == 2
     assert sm.price_at("EUR/USD", T0 + 2) == 1.2345
     assert sm.price_at("EUR/USD", T0 + 9) is None
+
+
+def test_dragging_window_corner_changes_scale(monkeypatch):
+    import types
+
+    from candlesense.ui import panel as P
+
+    rect = [0, 0, 800, 1000]
+    fake = types.SimpleNamespace(getWindowImageRect=lambda n: tuple(rect), resizeWindow=lambda *a: None)
+    w = P.PanelWindow.__new__(P.PanelWindow)
+    w.cv2, w.scale = fake, 1.0
+    clock = [100.0]
+    monkeypatch.setattr(P.time, "monotonic", lambda: clock[0])
+    w._fit_window(np.zeros((1000, 800, 3), np.uint8))
+    clock[0] += 1; w._watch_user_resize()            # referência: 800x1000
+    rect[2:] = [1200, 1500]
+    clock[0] += 0.1; w._watch_user_resize()          # puxando
+    assert w.pop_scale_change() is None
+    clock[0] += 0.5; w._watch_user_resize()          # soltou
+    assert w.pop_scale_change() == 1.5 and w.scale == 1.5
+    assert w.set_scale(9) and w.scale == 2.5

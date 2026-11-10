@@ -400,7 +400,7 @@ class SideScreens:
     def image(self, height_px: int) -> Optional[np.ndarray]:
         if not self.visible or self.state is None:
             return None
-        key = (self.state.key(), height_px)
+        key = (self.state.key(), height_px, self.scale)
         if key != self._key or self._img is None:
             self._img = side_screens(self.state, height_px, self.scale)
             self._key = key

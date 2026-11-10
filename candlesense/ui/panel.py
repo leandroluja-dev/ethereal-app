@@ -737,7 +737,7 @@ def _footer(c: _Canvas, d: Decision, reading: Optional[ChartReading], ex: Option
     st += " · " + ("probabilidade corrigida pelo placar" if d.calibrated else "probabilidade por regras")
     c.para(st, 11, FAINT, gap=4)
     c.para("Só lê a tela: nunca clica e nunca opera.", 11, FAINT, gap=4)
-    c.para("Teclas: c carteira · d detalhes · g gráfico · e entradas · q fechar", 11, FAINT, gap=4)
+    c.para("Teclas: c carteira · d detalhes · g gráfico · e entradas · + − tamanho · q fechar", 11, FAINT, gap=4)
 
 
 def render(decision: Decision, reading: Optional[ChartReading] = None, scale: float = 1.0,
@@ -780,7 +780,7 @@ class PanelWindow:
 
         self.cv2 = cv2
         self.scale = scale
-        # Janela que aumenta e diminui puxando o canto: a imagem acompanha (mantém a proporção).
+        # Janela que aumenta e diminui puxando o canto (ou com + e -): o painel é redesenhado no novo tamanho.
         cv2.namedWindow(self.NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
         self._shape: Optional[tuple[int, int]] = None
         self._topmost()
@@ -836,6 +836,7 @@ class PanelWindow:
                 print(f"telas das entradas: {e!r}", flush=True)
         self._fit_window(img)
         self.cv2.imshow(self.NAME, img)
+        self._watch_user_resize()
         self._frames += 1
         if self._frames in (1, 3, 10) or self._frames % 50 == 0:
             from ..platform.appmode import window_buttons
@@ -848,26 +849,65 @@ class PanelWindow:
                 pass
             self._placed = True
 
+    MIN_SCALE, MAX_SCALE = 0.5, 2.5
+
     def _fit_window(self, img: np.ndarray) -> None:
-        """Ajusta a janela quando a imagem muda de tamanho, mantendo o zoom que a pessoa escolheu."""
+        """Deixa a janela do tamanho exato da imagem (o tamanho escolhido já vem na escala)."""
         if getattr(img, "shape", None) is None:
             return
         h, w = img.shape[:2]
         if getattr(self, "_shape", None) == (w, h):
             return
-        zoom = 1.0
-        if getattr(self, "_shape", None) is not None:
-            try:
-                _, _, cw, _ = self.cv2.getWindowImageRect(self.NAME)
-                if cw > 0:
-                    zoom = max(0.3, min(3.0, cw / self._shape[0]))
-            except Exception:
-                pass
         self._shape = (w, h)
+        self._base = None  # tamanho de referência: medido logo depois que a janela assentar
+        self._resized_at = time.monotonic()
+        self._pending = None
         try:
-            self.cv2.resizeWindow(self.NAME, int(round(w * zoom)), int(round(h * zoom)))
+            self.cv2.resizeWindow(self.NAME, w, h)
         except Exception:
             pass
+
+    def _watch_user_resize(self) -> None:
+        """A pessoa puxou o canto da janela? Vira a nova escala (o painel é redesenhado nítido)."""
+        try:
+            _, _, cw, ch = self.cv2.getWindowImageRect(self.NAME)
+        except Exception:
+            return
+        if cw <= 0 or ch <= 0:
+            return
+        now = time.monotonic()
+        if getattr(self, "_base", None) is None:
+            if now - getattr(self, "_resized_at", 0.0) >= 0.6:
+                self._base = (cw, ch)
+            return
+        bw, bh = self._base
+        if abs(cw - bw) <= 6 and abs(ch - bh) <= 6:
+            self._pending = None
+            return
+        if getattr(self, "_pending", None) != (cw, ch):  # ainda puxando: espera soltar
+            self._pending, self._pending_at = (cw, ch), now
+            return
+        if now - self._pending_at < 0.4:
+            return
+        r = cw / bw if abs(cw - bw) / bw >= abs(ch - bh) / bh else ch / bh
+        self._pending = None
+        self.set_scale(self.scale * r)
+
+    def set_scale(self, scale: float) -> bool:
+        """Muda o tamanho do painel (0,5x a 2,5x). Devolve True se mudou."""
+        scale = round(max(self.MIN_SCALE, min(self.MAX_SCALE, scale)), 2)
+        if abs(scale - self.scale) < 0.01:
+            self._base = None
+            self._resized_at = time.monotonic()
+            return False
+        self.scale = scale
+        self._new_scale = scale
+        return True
+
+    def pop_scale_change(self) -> Optional[float]:
+        """Nova escala escolhida (puxando o canto ou com + e -) desde a última vez."""
+        s, self._new_scale = getattr(self, "_new_scale", None), None
+        return s
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
         cv2 = self.cv2
