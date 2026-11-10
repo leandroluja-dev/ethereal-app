@@ -88,7 +88,7 @@ button { font: inherit; color: inherit; }
 .tree .kids { position: relative; margin-left: 9px; padding-left: 18px; border-left: 1px solid var(--stroke-hi); display: flex; flex-direction: column; gap: 4px; }
 .leaf { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 8px 10px; border-radius: 12px; }
 .leaf::before { content: ""; position: absolute; left: -18px; top: 18px; width: 12px; border-top: 1px solid var(--stroke-hi); }
-.leaf .nm { display: flex; align-items: center; gap: 8px; font-size: 14px; min-width: 0; }
+.leaf .nm { display: flex; align-items: center; gap: 8px; font-size: 14px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .leaf .nm i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .leaf .cnt { font-size: 11px; color: var(--dim); align-self: center; justify-self: end; padding: 2px 7px; border-radius: 10px; border: 1px solid var(--stroke); }
 .leaf .sub { grid-column: 1 / -1; display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); padding-left: 16px; }
