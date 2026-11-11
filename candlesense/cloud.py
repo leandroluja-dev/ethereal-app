@@ -109,7 +109,21 @@ def main(argv=None) -> int:
     if not key:
         print("falta o segredo TWELVEDATA_KEY no GitHub", flush=True)
         return 2
-    res = run(out, key)
+    db_file = out / "candlesense.db"
+    if not db_file.exists():
+        # primeira rodada: ~41 h de velas, e as carteiras refeitas dia a dia (elas contam o dia de "agora")
+        from .feeds.twelvedata import series, symbol_of
+
+        bars = series(symbol_of(ASSET), "1min", outputsize=2500, key=key) or []
+        today = time.strftime("%Y-%m-%d")
+        days = sorted({time.strftime("%Y-%m-%d", time.localtime(b[0])) for b in bars} - {today})
+        for d in days:
+            t = time.strptime(d, "%Y-%m-%d")
+            end = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 23, 59, 30, 0, 0, -1))
+            print(f"nuvem: refazendo {d}: {run(out, key, now=end, bars=bars)}", flush=True)
+        res = run(out, key, bars=bars)
+    else:
+        res = run(out, key)
     print(f"nuvem: {res}", flush=True)
     return 0 if res["velas"] else 1
 
