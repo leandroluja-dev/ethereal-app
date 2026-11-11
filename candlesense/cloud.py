@@ -60,7 +60,9 @@ def run(out: Path, key: str, now: float | None = None, bars=None) -> dict:
     db = sqlite3.connect(str(out / "candlesense.db"))
     strong = StrongMode(db, log=lambda *a, **k: None)
     if bars is None:
-        bars = series(symbol_of(ASSET), "1min", outputsize=FETCH, key=key) or []
+        empty = db.execute("SELECT COUNT(*) FROM fita").fetchone()[0] == 0
+        # primeira rodada: pega ~15 h para refazer o que o app teria feito desde a tarde anterior
+        bars = series(symbol_of(ASSET), "1min", outputsize=900 if empty else FETCH, key=key) or []
     cutoff = int(now // 60) * 60
     rows = [(ASSET, s, o, h, lo, c, now) for s, o, h, lo, c in bars if s < cutoff]
     db.executemany("INSERT OR REPLACE INTO fita VALUES (?,?,?,?,?,?,?)", rows)
