@@ -287,13 +287,13 @@ def _wallet_extras(extras, wallet, store, account, wallet_view) -> None:
         wallet_view.show(render_wallet(days, board, store.signals(since=since), wallet_view.scale))
 
 
-def _sim_state(strong, sim, r, asset: str, play_sound: bool) -> None:
+def _sim_state(strong, sim, r, asset: str, play_sound: bool, now: float | None = None) -> None:
     """As carteiras do simulador para as telas ao lado do painel, com som quando sai resultado."""
     from .alerts import play
     from .history.wallet import day_start
     from .ui.sim_view import OLD_RISK_CUT, PAYOUT_RULE_SINCE, RISK_CUT, RISK_CUT_SINCE, WALLETS, SimState
 
-    now = time.time()
+    now = time.time() if now is None else now
     first = sim.state is None
     seen = sim.__dict__.setdefault("_status", {})
     seen_at = sim.__dict__.setdefault("_seen_at", {})
@@ -577,6 +577,53 @@ def _publish_web(web, st, extras, dec) -> None:
         print(f"página: {e!r}", flush=True)
 
 
+def _replay_once(dados) -> None:
+    """Refaz uma vez, em segundo plano, o que as carteiras teriam marcado no tempo em que o app
+    ficou fechado (10/11 18h28 em diante), com ~25 h de velas do Twelve, num banco à parte
+    (dados/replay). Só conta: não mexe no banco do app nem opera. Placar em dados/replay/placar.txt."""
+    import threading
+
+    out = Path(dados) / "replay"
+    if (out / "placar.txt").exists():
+        return
+
+    def work():
+        from .feeds.twelvedata import load_key, series, symbol_of
+        from . import cloud
+
+        key = load_key(dados)
+        if not key:
+            return
+        try:
+            bars = series(symbol_of(cloud.ASSET), "1min", outputsize=2500, key=key)
+            if not bars:
+                return
+            # as carteiras contam o dia de "agora": roda uma vez no fim do dia 10 e outra hoje
+            cloud.run(out, key, now=time.mktime((2026, 11, 10, 23, 59, 30, 0, 0, -1)), bars=bars)
+            cloud.run(out, key, bars=bars)
+            import sqlite3
+
+            db = sqlite3.connect(str(out / "candlesense.db"))
+            since = time.mktime((2026, 11, 10, 18, 28, 0, 0, 0, -1))
+            lines = [f"simulação feita depois, desde 10/11 18:28, payout fixo {cloud.PAYOUT}%"]
+            for w, n, wins, profit in db.execute(
+                    "SELECT wallet, COUNT(*), SUM(status='ganhou'), ROUND(SUM(COALESCE(profit,0)),2) "
+                    "FROM sim_hist WHERE ts>=? GROUP BY wallet ORDER BY wallet", (since,)):
+                lines.append(f"{w}: {n} entradas, {wins} wins, {n - wins} outras, R$ {profit:+.2f}")
+            for row in db.execute("SELECT wallet, ts, side, chance, status, profit FROM sim_hist "
+                                  "WHERE ts>=? ORDER BY ts, wallet", (since,)):
+                w, ts, side, ch, st, pr = row
+                lines.append(f"  {time.strftime('%d/%m %H:%M', time.localtime(ts))} {w} {side} "
+                             f"{ch:.1%} {st} {pr if pr is not None else ''}")
+            db.close()
+            (out / "placar.txt").write_text("\n".join(lines) + "\n")
+            print("replay pronto: " + lines[0], flush=True)
+        except Exception as e:
+            print(f"replay: {e!r}", flush=True)
+
+    threading.Thread(target=work, name="replay", daemon=True).start()
+
+
 def cmd_live(args) -> int:
     if APP_MODE:
         from .platform.appmode import close_other_instances, hide_python_dock_icon
@@ -592,6 +639,8 @@ def cmd_live(args) -> int:
     lite = APP_MODE and lite_file(args.dados).exists()
     _keep_awake(display=not lite)  # no modo leve a tela pode apagar: só o Mac não dorme
     web = _start_web(args, open_window=not lite) if APP_MODE else None
+    if APP_MODE and not args.sem_rede:
+        _replay_once(args.dados)
     if lite:
         from . import lite as lite_mode
 

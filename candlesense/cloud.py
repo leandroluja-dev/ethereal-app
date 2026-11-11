@@ -47,7 +47,7 @@ def measure_all(strong, asset: str, payout: int, now: float) -> int:
     return n
 
 
-def run(out: Path, key: str, now: float | None = None, bars=None) -> dict:
+def run(out: Path, key: str, now: float | None = None, bars=None, first_fetch: int = 900) -> dict:
     from .__main__ import _sim_state
     from .engine.strong import StrongMode
     from .feeds.twelvedata import series, symbol_of
@@ -62,7 +62,7 @@ def run(out: Path, key: str, now: float | None = None, bars=None) -> dict:
     if bars is None:
         empty = db.execute("SELECT COUNT(*) FROM fita").fetchone()[0] == 0
         # primeira rodada: pega ~15 h para refazer o que o app teria feito desde a tarde anterior
-        bars = series(symbol_of(ASSET), "1min", outputsize=900 if empty else FETCH, key=key) or []
+        bars = series(symbol_of(ASSET), "1min", outputsize=first_fetch if empty else FETCH, key=key) or []
     cutoff = int(now // 60) * 60
     rows = [(ASSET, s, o, h, lo, c, now) for s, o, h, lo, c in bars if s < cutoff]
     db.executemany("INSERT OR REPLACE INTO fita VALUES (?,?,?,?,?,?,?)", rows)
@@ -77,7 +77,7 @@ def run(out: Path, key: str, now: float | None = None, bars=None) -> dict:
     holder = Holder()
     last = db.execute("SELECT close FROM fita WHERE asset=? ORDER BY start DESC LIMIT 1", (ASSET,)).fetchone()
     r = SimpleNamespace(ok=last is not None, timeframe_s=60, current_price=last[0] if last else None, scale=None)
-    _sim_state(strong, holder, r, ASSET, play_sound=False)
+    _sim_state(strong, holder, r, ASSET, play_sound=False, now=now)
     st = holder.state
     extras = PanelExtras()
     extras.app_wallet = st.app_wallet()
